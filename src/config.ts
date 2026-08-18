@@ -35,6 +35,12 @@ export interface ImQQBotConfig {
   directPrompt?: string;
   /** 单条消息最大长度（QQ 限制约 5000 字符） */
   textChunkLimit: number;
+  /** 流式增量下发间隔(ms)；0 = 等整条消息生成后一次性发送（旧行为） */
+  streamFlushIntervalMs: number;
+  /** 单段内容发送失败的最大重试次数 */
+  sendMaxRetries: number;
+  /** 发送重试指数退避基数(ms) */
+  sendRetryBaseMs: number;
   /** 每会话最大闲置时长(ms)，超时自动回收 */
   sessionIdleTimeout: number;
   /** 并发队列最大长度 */
@@ -70,6 +76,9 @@ export const ConfigSchema: Schema<ImQQBotConfig> = Schema.object({
   groupPrompt: Schema.string().description('群聊额外system prompt'),
   directPrompt: Schema.string().description('私聊额外system prompt'),
   textChunkLimit: Schema.number().default(4500).description('单条消息最大字符数'),
+  streamFlushIntervalMs: Schema.number().default(2000).description('流式增量下发间隔(ms)，0=关闭流式（等整条消息）'),
+  sendMaxRetries: Schema.number().default(2).description('发送失败最大重试次数'),
+  sendRetryBaseMs: Schema.number().default(1000).description('发送重试退避基数(ms)'),
   sessionIdleTimeout: Schema.number().default(30 * 60 * 1000).description('会话闲置超时(ms)'),
   maxQueue: Schema.number().default(20).description('并发队列最大长度'),
   processingTimeoutMs: Schema.number().default(120000).description('处理超时(ms)'),

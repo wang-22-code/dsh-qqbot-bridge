@@ -35,6 +35,28 @@ test('open access requires explicit acknowledgement', () => {
   assert.match(result.errors.join('\n'), /acknowledgeOpenAccess/);
 });
 
+test('deepseek-official without DEEPSEEK_API_KEY warns', () => {
+  const saved = process.env.DEEPSEEK_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  try {
+    const result = validateSecurityConfig(config({ provider: 'deepseek-official' }));
+    assert.match(result.warnings.join('\n'), /DEEPSEEK_API_KEY/);
+  } finally {
+    if (saved) process.env.DEEPSEEK_API_KEY = saved;
+  }
+});
+
+test('other provider without DEEPSEEK_API_KEY does not warn', () => {
+  const saved = process.env.DEEPSEEK_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  try {
+    const result = validateSecurityConfig(config({ provider: 'openai-compatible' }));
+    assert.equal(result.warnings.some((w) => /DEEPSEEK_API_KEY/.test(w)), false);
+  } finally {
+    if (saved) process.env.DEEPSEEK_API_KEY = saved;
+  }
+});
+
 test('peer fingerprints are stable and do not expose the OpenID', () => {
   const openid = 'user-openid-sensitive';
   const value = peerFingerprint(openid);
