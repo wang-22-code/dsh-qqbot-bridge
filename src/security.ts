@@ -45,7 +45,16 @@ export function validateSecurityConfig(config: ImQQBotConfig): SecurityCheck {
     warnings.push('消息调试/正文日志已启用，日志可能包含聊天内容、OpenID 或附件地址');
   }
 
+  if (usesDeepSeekProvider(config) && !process.env.DEEPSEEK_API_KEY) {
+    warnings.push('未检测到 DEEPSEEK_API_KEY：模型调用会在运行时失败；请在 $DSH_HOME/.env 或启动环境中配置');
+  }
+
   return { errors, warnings, cwd };
+}
+
+/** 判断是否路由到 DeepSeek 官方接口（该路由必须提供 DEEPSEEK_API_KEY） */
+function usesDeepSeekProvider(config: ImQQBotConfig): boolean {
+  return config.provider === 'deepseek-official';
 }
 
 /** Stable pseudonym for logs; does not expose the QQ OpenID itself. */

@@ -4,6 +4,17 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+### Fixed
+
+- Outbound streaming now actually streams: incremental sends are scheduled
+  during generation (`streamFlushIntervalMs`), instead of waiting for the
+  whole message. Set it to `0` to keep the previous batched behavior.
+- Failed QQ sends no longer silently drop the turn's output. Unsent content
+  is retained and retried with exponential backoff (`sendMaxRetries`,
+  `sendRetryBaseMs`); once retries are exhausted the user is notified.
+- `turn/end` errors are now surfaced to the user instead of being debug-only
+  logs.
+
 ### Added
 
 - QQ-backed one-shot DSH approval requests.
