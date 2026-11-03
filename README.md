@@ -486,7 +486,7 @@ cd node_modules/.pnpm/node-pty@*/node_modules/node-pty && npx --yes node-gyp@11 
 
 ## 🤝 参与贡献
 
-提交改动前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [SECURITY.md](SECURITY.md)。安全问题请通过 GitHub Security Advisory 私下报告，不要公开提交凭据或日志。
+提交改动前请阅读 [CONTRIBUTING.md](docs/CONTRIBUTING.md) 与 [SECURITY.md](docs/SECURITY.md)。安全问题请通过 GitHub Security Advisory 私下报告，不要公开提交凭据或日志。
 
 ## 👤 作者与交流
 
@@ -497,4 +497,4 @@ cd node_modules/.pnpm/node-pty@*/node_modules/node-pty && npx --yes node-gyp@11 
 
 ## 📄 来源与许可
 
-本项目派生自腾讯官方 MIT 项目 [`@tencent-connect/dsh-qqbot`](https://github.com/tencent-connect/dsh-qqbot)，由社区独立维护，并非腾讯官方产品。详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
+本项目派生自腾讯官方 MIT 项目 [`@tencent-connect/dsh-qqbot`](https://github.com/tencent-connect/dsh-qqbot)，由社区独立维护，并非腾讯官方产品。详见 [LICENSE](LICENSE) 与 [NOTICE](docs/NOTICE)。
