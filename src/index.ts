@@ -25,13 +25,16 @@ import type { MiddlewareContext } from '@tencent-connect/qqbot-nodejs';
 
 import { ConfigSchema, type ImQQBotConfig } from './config.js';
 import { SessionManager, type DshAgentRegistry } from './session/index.js';
+import { bootstrapOneBot } from './channel/onebot.js';
 import { handleInbound, createOutboundHandler } from './transport/index.js';
 import { buildCommandList } from './commands/index.js';
 import { resolveEnv, buildUserAgent } from './shared/index.js';
 import { runQrSetup, persistCredentialsToDshEnv } from './setup.js';
 import { validateSecurityConfig } from './security.js';
 import { QqApprovalController, type ApprovalRequestLike, type ApprovalOutcome } from './approval.js';
-import type { Logger } from './types.js';
+import { MemoryStore, handleMemoryCommand, autoCapture, keywordExtractor, defaultMemoryRoot } from './memory/index.js';
+import { synthesize, detectEmotion } from './voice/index.js';
+import type { Logger, ReplyTarget } from './types.js';
 
 // ── Cordis 插件元数据 ──
 export const name = 'im-qqbot';
@@ -46,6 +49,13 @@ export async function apply(ctx: Context, config: ImQQBotConfig): Promise<void> 
   const logger: Logger = ((ctx as unknown as Record<string, unknown>).logger as Logger) ?? console;
 
   console.log('[im-qqbot] apply() called');
+
+  // ── OneBot / NapCat 个人号通道 ──
+  if (config.channel === 'onebot') {
+    const resolvedOneBot: ImQQBotConfig = { ...config, appId: config.onebot.selfId || 'onebot' };
+    await bootstrapOneBot(ctx, agents, resolvedOneBot, logger);
+    return;
+  }
 
   let appId = resolveEnv(config.appId, 'QQBOT_APPID');
   let appSecret = resolveEnv(config.appSecret, 'QQBOT_SECRET');
@@ -97,6 +107,9 @@ async function bootstrap(
   config.cwd = security.cwd;
 
   const manager = new SessionManager(ctx, agents, config, logger);
+  const memoryStore = config.memory.enabled
+    ? new MemoryStore(config.memory.dir || defaultMemoryRoot())
+    : undefined;
 
   // ── 初始化 QQ Bot SDK ──
   const userAgent = buildUserAgent();
@@ -170,6 +183,32 @@ async function bootstrap(
     },
   }));
 
+  // ── 记忆命令（/memory）：在白名单之后、审批与转发之前消费 ──
+  if (memoryStore) {
+    bot.use(async (mCtx: MiddlewareContext, next: () => Promise<void>) => {
+      const msg = mCtx.message as unknown as {
+        kind?: string;
+        senderId: string;
+        groupOpenid?: string;
+        messageId?: string;
+        content?: string;
+      };
+      const scope: 'c2c' | 'group' = msg.kind === 'group' ? 'group' : 'c2c';
+      const peerId = scope === 'group' ? (msg.groupOpenid ?? msg.senderId) : msg.senderId;
+      const peerKey = `official:${scope}:${peerId}`;
+      const text = (msg.content ?? '').trim();
+      const cmd = handleMemoryCommand(memoryStore, peerKey, text);
+      if (cmd.handled) {
+        const replyTarget: ReplyTarget = { scope, targetId: peerId, msgId: msg.messageId };
+        await bot.sendMarkdown(replyTarget, cmd.reply ?? '');
+        mCtx.stop('memory command consumed');
+        return;
+      }
+      autoCapture(memoryStore, peerKey, text);
+      await next();
+    });
+  }
+
   // QQ 审批回复必须在历史、斜杠命令和 Agent 转发之前消费。
   if (config.enableApprovals) {
     bot.use(async (mCtx: MiddlewareContext, next: () => Promise<void>) => {
@@ -235,6 +274,32 @@ async function bootstrap(
     includeSender: true,
   }));
 
+  // ── 记忆召回注入：把相关长期记忆拼接到本轮用户内容前 ──
+  if (memoryStore) {
+    bot.use(async (mCtx: MiddlewareContext, next: () => Promise<void>) => {
+      const msg = mCtx.message as unknown as {
+        kind?: string;
+        senderId: string;
+        groupOpenid?: string;
+        content?: string;
+      };
+      const scope: 'c2c' | 'group' = msg.kind === 'group' ? 'group' : 'c2c';
+      const peerId = scope === 'group' ? (msg.groupOpenid ?? msg.senderId) : msg.senderId;
+      const peerKey = `official:${scope}:${peerId}`;
+      const query = msg.content ?? '';
+      // 来源补存：原始消息先无损留存
+      memoryStore.recordSource(peerKey, query);
+      const prefix = memoryStore.buildPromptBlock(
+        peerKey,
+        query,
+        config.memory.recallLimit,
+        config.memory.maxChars,
+      );
+      if (prefix) msg.content = prefix + query;
+      await next();
+    });
+  }
+
   // ══════════════════════════════════════════════════════════════
   // 最终处理：经过中间件链后的消息交给 dsh agent
   // ══════════════════════════════════════════════════════════════
@@ -251,6 +316,60 @@ async function bootstrap(
   const outboundHandler = createOutboundHandler(manager, bot, config, logger);
   (ctx as unknown as { on(event: string, handler: (...args: unknown[]) => void): void })
     .on('session/event', outboundHandler as (...args: unknown[]) => void);
+
+  // ── 官方通道情绪语音：助手完整回复后合成并发送语音 ──
+  if (config.voice.enabled && config.voice.provider !== 'off') {
+    const officialVoiceHandler = (
+      session: { header: { id: string } },
+      event: { type: string; data: Record<string, unknown> },
+    ): void => {
+      if (event.type !== 'assistant/message') return;
+      const blocks = (event.data as { message?: { content?: Array<{ type: string; text?: string }> } })
+        .message?.content;
+      if (!Array.isArray(blocks)) return;
+      const text = blocks
+        .filter((b) => b.type === 'text' && b.text)
+        .map((b) => b.text as string)
+        .join('\n')
+        .trim();
+      if (!text) return;
+      const record = manager.findBySessionId(session.header.id);
+      if (!record) return;
+      const emotion = detectEmotion(text);
+      void synthesize(config.voice, text, emotion)
+        .then((res) => bot.sendVoice(record.replyTarget, { localPath: res.file }))
+        .catch((err: unknown) => {
+          const detail = err instanceof Error ? err.message : String(err);
+          logger.warn(`[voice] 官方通道语音发送失败（已保留文字回复）: ${detail}`);
+        });
+    };
+    (ctx as unknown as { on(event: string, handler: (...args: unknown[]) => void): void })
+      .on('session/event', officialVoiceHandler as unknown as (...args: unknown[]) => void);
+  }
+
+  // ── 官方通道：轮次结束（压缩前）记忆补存 ──
+  if (memoryStore) {
+    const memoryTurnHandler = (
+      session: { header: { id: string } },
+      event: { type: string; data: Record<string, unknown> },
+    ): void => {
+      if (event.type !== 'turn/end') return;
+      const record = manager.findBySessionId(session.header.id);
+      if (!record) return;
+      const peerKey = `official:${record.scope}:${record.peerId}`;
+      void memoryStore
+        .extractFromSources(peerKey, keywordExtractor)
+        .then((count) => {
+          if (count > 0) logger.info(`[memory] 本轮结束补存 ${count} 条事实 (${peerKey})`);
+        })
+        .catch((err: unknown) => {
+          const detail = err instanceof Error ? err.message : String(err);
+          logger.warn(`[memory] 补存失败: ${detail}`);
+        });
+    };
+    (ctx as unknown as { on(event: string, handler: (...args: unknown[]) => void): void })
+      .on('session/event', memoryTurnHandler as unknown as (...args: unknown[]) => void);
+  }
 
   if (config.enableApprovals) {
     (ctx as unknown as {

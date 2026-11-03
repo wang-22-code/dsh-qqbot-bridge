@@ -14,6 +14,18 @@
     - id: im-qqbot
       name: 'dsh-qqbot-bridge'
       config:
+        # 通道类型：
+        #   official = 腾讯官方 QQ 机器人（默认，需下面的 appId/appSecret）
+        #   onebot   = NapCat/OneBot v11 个人号（需配置 onebot 段，见下）
+        channel: official
+        # OneBot 个人号通道（channel: onebot 时生效）：
+        # onebot:
+        #   wsUrl: 'ws://127.0.0.1:3001'   # NapCat 正向 WebSocket 地址
+        #   accessToken: ''                # OneBot access_token
+        #   selfId: ''                     # 机器人 QQ 号（留空自动获取）
+        #   reconnectMaxMs: 30000
+        #   webuiUrl: 'http://127.0.0.1:6099'  # 可选：NapCat WebUI，用于查询登录二维码
+        #   webuiToken: ''                     # 可选：NapCat WebUI Token
         appId: __FROM_ENV__
         appSecret: __FROM_ENV__
         # DSH rc.6 的程序化 Agent 需要显式模型；用户仍可通过 /model 切换
