@@ -23,6 +23,9 @@ import {
 } from '@tencent-connect/qqbot-nodejs';
 import type { MiddlewareContext } from '@tencent-connect/qqbot-nodejs';
 
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { ConfigSchema, type ImQQBotConfig } from './config.js';
 import { SessionManager, type DshAgentRegistry } from './session/index.js';
 import { bootstrapOneBot } from './channel/onebot.js';
@@ -32,9 +35,20 @@ import { resolveEnv, buildUserAgent } from './shared/index.js';
 import { runQrSetup, persistCredentialsToDshEnv } from './setup.js';
 import { validateSecurityConfig } from './security.js';
 import { QqApprovalController, type ApprovalRequestLike, type ApprovalOutcome } from './approval.js';
-import { MemoryStore, handleMemoryCommand, autoCapture, keywordExtractor, defaultMemoryRoot } from './memory/index.js';
+import {
+  MemoryStore,
+  handleMemoryCommand,
+  autoCapture,
+  keywordExtractor,
+  createResilientExtractor,
+  createLlmExtractor,
+  defaultMemoryRoot,
+  type MemoryExtractor,
+  type LlmServiceLike,
+} from './memory/index.js';
 import { synthesize, detectEmotion } from './voice/index.js';
 import type { Logger, ReplyTarget } from './types.js';
+import { loadProjectEnv } from './shared/env-loader.js';
 
 // ── Cordis 插件元数据 ──
 export const name = 'im-qqbot';
@@ -45,15 +59,33 @@ export type { ImQQBotConfig } from './config.js';
 
 // ── 插件主体 ──
 export async function apply(ctx: Context, config: ImQQBotConfig): Promise<void> {
+  // 加载项目根目录 .env（以及包目录 .env），让「项目内 .env」成为最简配置入口。
+  // 只弥补未设置的变量，不覆盖 $DSH_HOME/.env 已注入的值。
+  const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const envLoad = loadProjectEnv(process.cwd(), packageRoot);
+  applyEnvOverrides(config);
+  try {
+    const v = config.voice;
+    console.log(
+      `[im-qqbot] voice config: enabled=${String(v?.enabled)} provider=${String(v?.provider)} voiceId=${String(v?.breezeVoice)} hasKey=${Boolean(v && v.apiKey)}`,
+    );
+  } catch {
+    /* ignore */
+  }
+
   const agents = (ctx as unknown as Record<string, unknown>).agents as DshAgentRegistry;
   const logger: Logger = ((ctx as unknown as Record<string, unknown>).logger as Logger) ?? console;
+  const extractor = buildMemoryExtractor(ctx, config, logger);
 
   console.log('[im-qqbot] apply() called');
+  if (envLoad.keys.length > 0) {
+    console.log(`[im-qqbot] 已加载 .env: ${envLoad.files.join(', ')} (keys: ${envLoad.keys.join(', ')})`);
+  }
 
   // ── OneBot / NapCat 个人号通道 ──
   if (config.channel === 'onebot') {
     const resolvedOneBot: ImQQBotConfig = { ...config, appId: config.onebot.selfId || 'onebot' };
-    await bootstrapOneBot(ctx, agents, resolvedOneBot, logger);
+    await bootstrapOneBot(ctx, agents, resolvedOneBot, logger, extractor);
     return;
   }
 
@@ -83,7 +115,86 @@ export async function apply(ctx: Context, config: ImQQBotConfig): Promise<void> 
 
   const resolvedConfig: ImQQBotConfig = { ...config, appId, appSecret };
 
-  await bootstrap(ctx, agents, resolvedConfig, logger);
+  await bootstrap(ctx, agents, resolvedConfig, logger, extractor);
+}
+
+/**
+ * 用进程环境变量补齐/覆盖运行配置，让「项目根 .env」成为最简配置入口。
+ * 只覆盖“显式提供了环境变量”的项；未提供的保持 YAML/默认值。
+ * YAML 里的 `!!js process.env.X` 可能在配置组装阶段早于 .env 加载而求值为空，
+ * 因此这里在 apply 时以 env 为准补齐。
+ */
+function applyEnvOverrides(config: ImQQBotConfig): void {
+  const env = process.env;
+
+  // 通道
+  if (env.IM_QQBOT_CHANNEL === 'official' || env.IM_QQBOT_CHANNEL === 'onebot') {
+    config.channel = env.IM_QQBOT_CHANNEL;
+  }
+
+  // OneBot 配置
+  if (config.onebot) {
+    if (env.ONEBOT_WS_URL) config.onebot.wsUrl = env.ONEBOT_WS_URL;
+    if (env.ONEBOT_ACCESS_TOKEN) config.onebot.accessToken = env.ONEBOT_ACCESS_TOKEN;
+    if (env.ONEBOT_SELF_ID) config.onebot.selfId = env.ONEBOT_SELF_ID;
+    if (env.ONEBOT_WEBUI_URL) config.onebot.webuiUrl = env.ONEBOT_WEBUI_URL;
+    if (env.ONEBOT_WEBUI_TOKEN) config.onebot.webuiToken = env.ONEBOT_WEBUI_TOKEN;
+  }
+
+  // 记忆
+  if (config.memory && env.MEMORY_ENABLED) {
+    config.memory.enabled = /^(1|true|yes)$/i.test(env.MEMORY_ENABLED);
+  }
+
+  // 访问控制白名单也可由 .env 覆盖（否则 YAML 里的 !!js 早于 .env 加载会取空）
+  if (config.access && env.QQBOT_C2C_ALLOW !== undefined) {
+    config.access.c2cAllow = env.QQBOT_C2C_ALLOW.split(',').map((v) => v.trim()).filter(Boolean);
+  }
+  if (config.access && env.QQBOT_GROUP_ALLOW !== undefined) {
+    config.access.groupAllow = env.QQBOT_GROUP_ALLOW.split(',').map((v) => v.trim()).filter(Boolean);
+  }
+
+  // 语音
+  const voice = config.voice;
+  if (voice) {
+    if (env.VOICE_ENABLED) voice.enabled = /^(1|true|yes)$/i.test(env.VOICE_ENABLED);
+    const vp = env.VOICE_PROVIDER;
+    if (vp === 'off' || vp === 'breezeblue' || vp === 'openai' || vp === 'local') voice.provider = vp;
+    if (!voice.apiKey && env.BREEZE_API_KEY) voice.apiKey = env.BREEZE_API_KEY;
+    if (env.BREEZE_VOICE_ID) voice.breezeVoice = env.BREEZE_VOICE_ID;
+    if (env.BREEZE_URL) voice.breezeUrl = env.BREEZE_URL;
+    if (env.BREEZE_MODEL) voice.breezeModel = env.BREEZE_MODEL;
+    if (env.VOICE_API_KEY) voice.apiKey = env.VOICE_API_KEY;
+    if (env.VOICE_EMOTIONAL) voice.emotional = /^(1|true|yes)$/i.test(env.VOICE_EMOTIONAL);
+  }
+}
+
+/**
+ * 选择记忆抽取器：优先用 DSH 对话模型做语义抽取，失败自动降级到关键词规则；
+ * 若部署未提供 llm 服务则直接使用关键词规则。
+ */
+function buildMemoryExtractor(ctx: Context, config: ImQQBotConfig, logger: Logger): MemoryExtractor {
+  try {
+    const container = ctx as unknown as { get?: (name: string) => unknown; llm?: unknown };
+    const llm = (typeof container.get === 'function' ? container.get('llm') : container.llm) as
+      | LlmServiceLike
+      | undefined;
+    if (llm && typeof llm.stream === 'function') {
+      const primary = createLlmExtractor({
+        llm,
+        provider: config.provider ?? 'deepseek-official',
+        model: config.model ?? 'deepseek-v4-flash',
+      });
+      logger.info(`[memory] 使用 LLM 语义抽取器: ${primary.name}`);
+      return createResilientExtractor(primary, keywordExtractor, (msg) =>
+        logger.warn(`[memory] LLM 抽取失败，降级关键词: ${msg}`),
+      );
+    }
+  } catch (err) {
+    logger.warn(`[memory] 获取 llm 服务失败，使用关键词抽取: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  logger.info('[memory] 使用关键词抽取器');
+  return keywordExtractor;
 }
 
 async function bootstrap(
@@ -91,6 +202,7 @@ async function bootstrap(
   agents: DshAgentRegistry,
   config: ImQQBotConfig,
   logger: Logger,
+  extractor: MemoryExtractor,
 ): Promise<void> {
   const security = validateSecurityConfig(config);
   for (const warning of security.warnings) {
@@ -347,20 +459,23 @@ async function bootstrap(
       .on('session/event', officialVoiceHandler as unknown as (...args: unknown[]) => void);
   }
 
-  // ── 官方通道：轮次结束（压缩前）记忆补存 ──
+  // ── 官方通道：轮次结束 & 压缩前(compaction/start) 记忆补存 ──
   if (memoryStore) {
-    const memoryTurnHandler = (
+    const memoryFlushHandler = (
       session: { header: { id: string } },
       event: { type: string; data: Record<string, unknown> },
     ): void => {
-      if (event.type !== 'turn/end') return;
+      if (event.type !== 'turn/end' && event.type !== 'compaction/start') return;
       const record = manager.findBySessionId(session.header.id);
       if (!record) return;
       const peerKey = `official:${record.scope}:${record.peerId}`;
       void memoryStore
-        .extractFromSources(peerKey, keywordExtractor)
+        .extractFromSources(peerKey, extractor)
         .then((count) => {
-          if (count > 0) logger.info(`[memory] 本轮结束补存 ${count} 条事实 (${peerKey})`);
+          if (count > 0) {
+            const phase = event.type === 'compaction/start' ? '压缩前' : '轮次结束';
+            logger.info(`[memory] ${phase}补存 ${count} 条事实 (${peerKey})`);
+          }
         })
         .catch((err: unknown) => {
           const detail = err instanceof Error ? err.message : String(err);
@@ -368,7 +483,7 @@ async function bootstrap(
         });
     };
     (ctx as unknown as { on(event: string, handler: (...args: unknown[]) => void): void })
-      .on('session/event', memoryTurnHandler as unknown as (...args: unknown[]) => void);
+      .on('session/event', memoryFlushHandler as unknown as (...args: unknown[]) => void);
   }
 
   if (config.enableApprovals) {

@@ -6,10 +6,12 @@ export { OneBotApi, type OneBotLoginInfo } from './api.js';
 export { OneBotSender } from './sender.js';
 export {
   fetchNapCatQrcode,
+  pollNapCatLogin,
   parseNapCatQrPayload,
   type NapCatQrInfo,
   type NapCatQrFetchOptions,
   type NapCatQrFetchResult,
+  type NapCatPollOptions,
 } from './napcat-login.js';
 export {
   parseSegments,

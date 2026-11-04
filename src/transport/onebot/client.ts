@@ -69,6 +69,16 @@ export class OneBotClient {
     this.ws = null;
   }
 
+  /** 强制重建连接（心跳/健康检查失败时调用，会触发自动重连） */
+  forceReconnect(): void {
+    if (this.closed) return;
+    try {
+      this.ws?.close();
+    } catch {
+      /* ignore */
+    }
+  }
+
   /** 调用 OneBot action 并等待 echo 响应 */
   call(action: string, params: Record<string, unknown>, timeoutMs = 15000): Promise<unknown> {
     return new Promise<unknown>((resolve, reject) => {

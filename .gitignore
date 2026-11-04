@@ -15,3 +15,8 @@ qrcode*.txt
 *.log
 .DS_Store
 .pnpm-store/
+.runtime-plugin.log
+e2e-actions.jsonl
+e2e-result.json
+e2e-live.jsonl
+tmp-breeze-key.json

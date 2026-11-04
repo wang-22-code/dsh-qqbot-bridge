@@ -14,13 +14,13 @@ import type { Logger } from '../types.js';
 import { validateSecurityConfig } from '../security.js';
 import { SessionManager, type DshAgentRegistry } from '../session/index.js';
 import { createOutboundHandler } from '../transport/outbound.js';
-import { MemoryStore, handleMemoryCommand, autoCapture, keywordExtractor, defaultMemoryRoot } from '../memory/index.js';
+import { MemoryStore, handleMemoryCommand, autoCapture, defaultMemoryRoot, type MemoryExtractor } from '../memory/index.js';
 import { synthesize, detectEmotion } from '../voice/index.js';
 import {
   OneBotClient,
   OneBotApi,
   OneBotSender,
-  fetchNapCatQrcode,
+  pollNapCatLogin,
   parseSegments,
   extractText,
   isMentioned,
@@ -40,6 +40,7 @@ export async function bootstrapOneBot(
   agents: DshAgentRegistry,
   config: ImQQBotConfig,
   logger: Logger,
+  extractor: MemoryExtractor,
 ): Promise<void> {
   const security = validateSecurityConfig(config);
   for (const warning of security.warnings) {
@@ -54,6 +55,7 @@ export async function bootstrapOneBot(
   config.cwd = security.cwd;
 
   const manager = new SessionManager(ctx, agents, config, logger);
+  const seenMessageIds = new Set<string>();
   const memoryStore = config.memory.enabled
     ? new MemoryStore(config.memory.dir || defaultMemoryRoot())
     : undefined;
@@ -78,6 +80,17 @@ export async function bootstrapOneBot(
 
     const selfId = config.onebot.selfId;
     if (selfId && String(event.user_id) === selfId) return; // 忽略自己发出的消息
+
+    // 消息去重：断线重连/网关重放时避免重复处理同一条消息
+    if (event.message_id != null) {
+      const mid = String(event.message_id);
+      if (seenMessageIds.has(mid)) return;
+      seenMessageIds.add(mid);
+      if (seenMessageIds.size > 1000) {
+        const oldest = seenMessageIds.values().next();
+        if (!oldest.done) seenMessageIds.delete(oldest.value);
+      }
+    }
 
     const segments = parseSegments(event.message);
     const isGroup = event.message_type === 'group';
@@ -169,7 +182,15 @@ export async function bootstrapOneBot(
       if (!record) return;
       const emotion = detectEmotion(text);
       void synthesize(config.voice, text, emotion)
-        .then((res) => sender.sendVoice(record.replyTarget, res.file))
+        .then(async (res) => {
+          try {
+            await sender.sendVoice(record.replyTarget, res.file);
+          } catch {
+            // 语音发送失败重试一次，仍失败则保留文字回复
+            await new Promise<void>((r) => setTimeout(r, 500));
+            await sender.sendVoice(record.replyTarget, res.file);
+          }
+        })
         .catch((err: unknown) => {
           const detail = err instanceof Error ? err.message : String(err);
           logger.warn(`[voice] 语音合成/发送失败（已保留文字回复）: ${detail}`);
@@ -181,20 +202,23 @@ export async function bootstrapOneBot(
     );
   }
 
-  // ── 轮次结束（压缩前）记忆补存：把来源队列抽取为长期事实 ──
+  // ── 记忆补存：轮次结束 & 压缩前(compaction/start) 把来源队列抽取为长期事实 ──
   if (memoryStore) {
-    const memoryTurnHandler = (
+    const memoryFlushHandler = (
       session: { header: { id: string } },
       event: { type: string; data: Record<string, unknown> },
     ): void => {
-      if (event.type !== 'turn/end') return;
+      if (event.type !== 'turn/end' && event.type !== 'compaction/start') return;
       const record = manager.findBySessionId(session.header.id);
       if (!record) return;
       const peerKey = `${record.scope}:${record.peerId}`;
       void memoryStore
-        .extractFromSources(peerKey, keywordExtractor)
+        .extractFromSources(peerKey, extractor)
         .then((count) => {
-          if (count > 0) logger.info(`[memory] 本轮结束补存 ${count} 条事实 (${peerKey})`);
+          if (count > 0) {
+            const phase = event.type === 'compaction/start' ? '压缩前' : '轮次结束';
+            logger.info(`[memory] ${phase}补存 ${count} 条事实 (${peerKey})`);
+          }
         })
         .catch((err: unknown) => {
           const detail = err instanceof Error ? err.message : String(err);
@@ -203,26 +227,56 @@ export async function bootstrapOneBot(
     };
     (ctx as unknown as SessionEventContext).on(
       'session/event',
-      memoryTurnHandler as unknown as (...args: unknown[]) => void,
+      memoryFlushHandler as unknown as (...args: unknown[]) => void,
     );
   }
 
   (ctx as unknown as SessionEventContext).effect(() => {
     logger.info(`OneBot 通道启动，连接 ${config.onebot.wsUrl}`);
-    // 若配置了 NapCat WebUI，主动拉取登录二维码，方便插件内扫码
+    const pollAbort = new AbortController();
+
+    // 若配置了 NapCat WebUI，轮询登录二维码（插件内扫码）
     if (config.onebot.webuiUrl) {
-      void fetchNapCatQrcode({
+      void pollNapCatLogin({
         webuiUrl: config.onebot.webuiUrl,
         token: config.onebot.webuiToken,
         logger,
+        signal: pollAbort.signal,
+        isLoggedIn: async () => {
+          try {
+            await api.getLoginInfo();
+            return true;
+          } catch {
+            return false;
+          }
+        },
       }).then((result) => {
-        if (result.ok) {
-          console.log(`[im-qqbot] [napcat] 登录二维码: ${result.file ?? result.qrUrl ?? '(见日志)'}`);
-        } else {
-          logger.warn(`[napcat] ${result.message}`);
-        }
+        logger.info(`[napcat] 登录轮询结束: ${result.message}`);
       });
     }
+
+    // 心跳看门狗：定期 get_status；连续“连接类”失败则强制重连
+    let healthFails = 0;
+    const watchdog = setInterval(() => {
+      if (!client.isOpen) return;
+      api
+        .call('get_status', {}, 8000)
+        .then(() => {
+          healthFails = 0;
+        })
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (/未连接|超时|closed|关闭|ECONN|socket|websocket|网络/i.test(msg)) {
+            healthFails += 1;
+            if (healthFails >= 2) {
+              healthFails = 0;
+              logger.warn('[onebot] 心跳检查连续失败，强制重连');
+              client.forceReconnect();
+            }
+          }
+        });
+    }, 30000);
+
     client
       .start()
       .then(async () => {
@@ -244,6 +298,8 @@ export async function bootstrapOneBot(
 
     return async () => {
       logger.info('OneBot 通道关闭');
+      pollAbort.abort();
+      clearInterval(watchdog);
       client.close();
       await manager.disposeAll();
     };

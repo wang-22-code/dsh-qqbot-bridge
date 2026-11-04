@@ -7,7 +7,7 @@
  * - 遗忘用墓碑（forgotten 标记），不物理删除
  * - 回复前按关键词/别名召回有限条事实注入 prompt
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -162,8 +162,9 @@ export class MemoryStore {
 
   private persist(peerKey: string, data: MemoryFileData): void {
     mkdirSync(this.rootDir, { recursive: true });
-    writeFileSync(this.jsonPath(peerKey), JSON.stringify(data, null, 2), 'utf8');
-    writeFileSync(this.mdPath(peerKey), renderMarkdown(peerKey, data), 'utf8');
+    // 原子写：先写临时文件再 rename，避免进程中断导致 JSON 损坏
+    atomicWrite(this.jsonPath(peerKey), JSON.stringify(data, null, 2));
+    atomicWrite(this.mdPath(peerKey), renderMarkdown(peerKey, data));
     this.cache.set(peerKey, data);
   }
 
@@ -223,8 +224,7 @@ export class MemoryStore {
   }
 }
 
-function renderMarkdown(peerKey: string, data: MemoryFileData): string {
-  const lines: string[] = [`# 记忆宫殿 · ${peerKey}`, ''];
+function renderMarkdown(peerKey: string, data: MemoryFileData): string {  const lines: string[] = [`# 记忆宫殿 · ${peerKey}`, ''];
   for (const fact of data.facts) {
     const flag = fact.forgotten ? ' _(已遗忘)_' : '';
     lines.push(`- [${fact.id.slice(0, 8)}] ${fact.text}${flag}`);
@@ -232,4 +232,11 @@ function renderMarkdown(peerKey: string, data: MemoryFileData): string {
   if (data.facts.length === 0) lines.push('_（暂无记忆）_');
   lines.push('');
   return lines.join('\n');
+}
+
+/** 原子写文件：先写临时文件再 rename，避免半截写入导致的损坏 */
+function atomicWrite(path: string, content: string): void {
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmp, content, 'utf8');
+  renameSync(tmp, path);
 }

@@ -38,7 +38,8 @@ test('buildTtsRequest for breezeblue uses official endpoint, headers and guidanc
   assert.match(req.url, /\/text-to-speech\/voice-abc\?output_format=wav&delivery=sync$/);
   assert.equal(req.headers['xi-api-key'], 'test-key');
   assert.equal(req.body.model_id, 'breeze-tts-2');
-  assert.equal(req.body.voice_id, 'voice-abc');
+  // BreezeBlue 禁止 body.voice_id（voice 已在 URL path，重复会被 422 拒绝）
+  assert.equal('voice_id' in req.body, false);
   assert.equal(req.body.instructions, '开心、轻快');
   assert.deepEqual(req.body.voice_settings, { guidance_scale: 1.2 });
 });

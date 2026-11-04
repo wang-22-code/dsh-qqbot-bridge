@@ -28,6 +28,10 @@ export interface TtsResult {
 export interface TtsDeps {
   fetchImpl?: typeof fetch;
   tmpDir?: string;
+  /** 失败重试次数（默认 2） */
+  retries?: number;
+  /** 单次请求超时(ms)，默认 30000 */
+  timeoutMs?: number;
 }
 
 const EMOTION_RULES: Array<{ re: RegExp; hint: string }> = [
@@ -70,7 +74,6 @@ export function buildTtsRequest(
       body: {
         text,
         model_id: cfg.breezeModel,
-        voice_id: cfg.breezeVoice,
         ...(instructions ? { instructions } : {}),
         voice_settings: { guidance_scale: cfg.guidanceScale },
       },
@@ -129,18 +132,44 @@ export async function synthesize(
   const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
   if (!fetchImpl) throw new Error('当前运行时不支持 fetch');
 
-  const res = await fetchImpl(req.url, {
-    method: 'POST',
-    headers: req.headers,
-    body: JSON.stringify(req.body),
-  });
-  if (!res.ok) throw new Error(`TTS 服务返回 HTTP ${res.status}`);
+  const retries = Math.max(0, deps.retries ?? 2);
+  const timeoutMs = deps.timeoutMs ?? 30000;
+  let lastError: Error = new Error('TTS 未执行');
 
-  const buf = new Uint8Array(await res.arrayBuffer());
-  if (buf.length === 0) throw new Error('TTS 返回空音频');
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetchImpl(req.url, {
+        method: 'POST',
+        headers: req.headers,
+        body: JSON.stringify(req.body),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        let detail = '';
+        try {
+          detail = (await res.text()).slice(0, 300);
+        } catch {
+          /* ignore */
+        }
+        throw new Error(`TTS 服务返回 HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
+      }
+      const buf = new Uint8Array(await res.arrayBuffer());
+      if (buf.length === 0) throw new Error('TTS 返回空音频');
 
-  const dir = deps.tmpDir ?? tmpdir();
-  const file = join(dir, `dsh-tts-${randomUUID()}.wav`);
-  writeFileSync(file, buf);
-  return { file };
+      const dir = deps.tmpDir ?? tmpdir();
+      const file = join(dir, `dsh-tts-${randomUUID()}.wav`);
+      writeFileSync(file, buf);
+      return { file };
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < retries) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 300 * 2 ** attempt));
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastError;
 }

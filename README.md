@@ -25,9 +25,13 @@
 - **只用官方能力**：基于腾讯 QQ 机器人开放平台与腾讯官方 SDK，不使用个人 QQ 逆向协议、Hook、注入或模拟登录。
 - **扫码即用**：首次启动支持腾讯官方扫码绑定，自动保存 `AppID`、`Secret` 和扫码用户 `OpenID`。
 - **默认安全**：私聊默认白名单、群聊默认关闭；空白名单不会退化成开放访问。
+- **双通道**：官方 QQ 机器人 + NapCatQQ 个人号（OneBot v11 正向 WS），私聊/群聊，支持文本与语音。
 - **流式与可靠**：QQ 消息直接驱动 DSH Agent，支持流式回复、发送失败指数退避重试、会话持久化与模型切换。
+- **记忆宫殿**：Markdown 事实 + JSON 索引，回复前召回、对话模型（LLM）语义抽取、压缩前（`compaction/start`）补存、按会话隔离。
+- **情绪语音**：BreezeBlue 官方 API / OpenAI 兼容 / 本地 audiocpp，带情绪指令，官方与 OneBot 双通道发送语音条。
+- **健壮性**：断线重连、心跳看门狗、发送重试、超时、消息去重、优雅关闭、NapCat 二维码轮询。
 - **权限闭环**：可在 QQ 内处理 DSH 的一次性权限申请：`/approve CODE` / `/deny CODE`。
-- **凭据不外泄**：`AppSecret`、`OpenID` 与 `API Key` 仅保存在本机 `$DSH_HOME/.env`，不进入项目配置与日志。
+- **凭据不外泄**：`AppSecret`、`OpenID` 与 `API Key` 仅保存在本机 `.env`（项目根或 `$DSH_HOME`，均被 git 忽略），不进入仓库与日志。
 - **工程保障**：内置隐私扫描、单元测试、类型检查、打包校验与 GitHub Actions CI。
 
 ---
@@ -177,23 +181,30 @@ dsh --profile qqbot
 
 ### 私密文件（`.env`）
 
-所有敏感配置统一放在：
+插件启动时会**自动加载项目根目录 `.env`**（也兼容 `$DSH_HOME/.env` 与 `DSH_QQBOT_ENV_FILE`）。**最简单的方式：把需要用的配置直接写进项目根目录 `.env`**——它已被 `.gitignore` 忽略，不会上传到仓库。
 
-```text
-$DSH_HOME/.env
-```
+- 项目根：`<项目>/.env`（推荐，最简）
+- 用户目录：`$DSH_HOME/.env`（DSH 核心仍从这里读取 `DEEPSEEK_API_KEY` 等）
 
-- Windows：`C:\Users\<你>\.dsh\.env`
-- macOS / Linux：`~/.dsh/.env`
+> 优先级：已存在的环境变量 / `$DSH_HOME/.env` 不会被覆盖；其余缺失项由项目根 `.env` 补齐。
 
 ```dotenv
+# QQ 官方机器人（channel=official）
 QQBOT_APPID="机器人 AppID"
 QQBOT_SECRET="机器人 AppSecret"
 QQBOT_C2C_ALLOW="用户OpenID1,用户OpenID2"
+# DSH 模型
 DEEPSEEK_API_KEY="DeepSeek API Key"
+# 通道：official | onebot
+IM_QQBOT_CHANNEL="official"
+# 情绪语音（BreezeBlue 示例）
+VOICE_ENABLED="true"
+VOICE_PROVIDER="breezeblue"
+BREEZE_VOICE_ID="voc_xxxx"
+BREEZE_API_KEY="BreezeBlue API Key"
 ```
 
-多个用户 OpenID 使用英文逗号分隔。**不要把个人 QQ 号当作 OpenID。**
+完整键名见 [`.env.example`](.env.example)。多个 OpenID 用英文逗号分隔；**不要把个人 QQ 号当作 OpenID。**
 
 ### Profile 配置
 
@@ -252,6 +263,8 @@ DEEPSEEK_API_KEY="DeepSeek API Key"
 | `sendMaxRetries` | `2` | 发送失败最大重试次数 |
 | `sendRetryBaseMs` | `1000` | 发送重试指数退避基数(ms) |
 | `debug` | `false` | SDK 诊断日志开关 |
+
+> OneBot / 记忆 / 语音相关配置见下方「扩展能力」章节；这些项也可用环境变量覆盖（`IM_QQBOT_CHANNEL`、`ONEBOT_*`、`MEMORY_ENABLED`、`VOICE_*`、`BREEZE_*` 等，详见 [`.env.example`](.env.example)）。
 
 > [!WARNING]
 > 不建议使用开放模式。确需使用时，必须同时设置 `access.c2cMode: open` 与 `acknowledgeOpenAccess: true`——开放模式会让任何能找到机器人的用户触发 DSH Agent。
@@ -339,7 +352,8 @@ onebot:
 
 - 私聊默认白名单、群聊默认关闭，沿用 `access` 配置（条目为 QQ 号 / 群号）。
 - 收发文本复用同一套流式 / 切分 / 重试出站管线，并支持发送语音条。
-- 配置 `onebot.webuiUrl` 后，启动时会主动拉取登录二维码，保存为 PNG 并打印路径，方便插件内扫码。
+- 健壮性：断线指数退避重连、**心跳看门狗**（`get_status` 连续失败自动重连）、**发送重试**（连接类错误退避重试）、消息去重、优雅关闭。
+- 配置 `onebot.webuiUrl` 后，启动时会**轮询拉取登录二维码**（刷新到 PNG 并打印路径），可检测登录状态，方便插件内扫码。
 
 > [!CAUTION]
 > 个人号走第三方网关，存在账号风控 / 封号与合规风险，请自行评估，优先使用专用测试号。
@@ -350,7 +364,7 @@ onebot:
 - **召回**：回复前按关键词召回最多 `memory.recallLimit` 条、总长 ≤ `memory.maxChars`，注入为「长期记忆」块。
 - **命令**：`/memory`、`/memory add <文本>`、`/memory search <关键词>`、`/memory forget <id前缀>`；说「记住… / 记得…」会自动补存。
 - **遗忘**：墓碑保留（可追溯），不物理删除；不同会话互不可见。
-- **压缩前补存**：原始消息先无损写入来源队列（`*.sources.jsonl`），每轮结束用**可插拔抽取器**（默认 `keywordExtractor`，可替换为对话模型语义抽取）提炼为长期事实。
+- **压缩前补存**：原始消息先无损写入来源队列（`*.sources.jsonl`）；在**真正的 DSH `compaction/start` 事件**以及每轮 `turn/end` 时，用**可插拔抽取器**提炼为长期事实。默认优先使用 **DSH 对话模型（LLM）做语义抽取**，失败自动降级到关键词规则（`keywordExtractor`），保证不因模型异常丢记忆；写盘为原子操作，避免损坏。
 
 ### 情绪语音 TTS
 
@@ -373,10 +387,10 @@ src/
 ├─ approval.ts          QQ 一次性审批通道
 ├─ channel/             OneBot 通道引导（复用 SessionManager + 出站管线）
 ├─ commands/            斜杠命令
-├─ memory/              记忆宫殿（存储 / 检索 / 抽取 / 命令）
+├─ memory/              记忆宫殿（存储 / 检索 / 抽取 / LLM / 命令）
 ├─ model/               模型发现、路由与用户偏好
 ├─ session/             QQ peer 与 DSH Session 映射
-├─ shared/              通用工具与发送辅助
+├─ shared/              通用工具、.env 加载与发送辅助
 ├─ transport/           入站组装、出站缓冲与分片
 │  └─ onebot/           OneBot v11 客户端、API、发送器、NapCat 登录
 ├─ voice/               情绪语音 TTS（BreezeBlue / OpenAI 兼容 / 本地）

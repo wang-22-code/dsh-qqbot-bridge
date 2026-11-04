@@ -108,3 +108,54 @@ export async function fetchNapCatQrcode(opts: NapCatQrFetchOptions): Promise<Nap
 
   return { ok: false, message: `获取 NapCat 登录二维码失败：${lastError || '未知错误'}` };
 }
+
+export interface NapCatPollOptions extends NapCatQrFetchOptions {
+  /** 轮询间隔(ms)，默认 15000 */
+  intervalMs?: number;
+  /** 总超时(ms)，默认 300000 */
+  timeoutMs?: number;
+  /** 检查是否已登录（如调用 OneBot get_login_info） */
+  isLoggedIn?: () => Promise<boolean>;
+  /** 中止轮询 */
+  signal?: AbortSignal;
+}
+
+/**
+ * 轮询登录：反复获取/刷新登录二维码，并检查登录状态，
+ * 直到登录成功 / 超时 / 被中止。适合"插件内扫码登录"场景。
+ */
+export async function pollNapCatLogin(
+  opts: NapCatPollOptions,
+): Promise<{ ok: boolean; message: string }> {
+  const intervalMs = opts.intervalMs ?? 15000;
+  const timeoutMs = opts.timeoutMs ?? 300000;
+  const startedAt = Date.now();
+  let lastQrSign = '';
+
+  while (Date.now() - startedAt < timeoutMs) {
+    if (opts.signal?.aborted) return { ok: false, message: '已中止轮询' };
+
+    if (opts.isLoggedIn) {
+      const loggedIn = await opts.isLoggedIn().catch(() => false);
+      if (loggedIn) {
+        opts.logger.info('[napcat] 检测到已登录');
+        return { ok: true, message: '已登录' };
+      }
+    }
+
+    const result = await fetchNapCatQrcode(opts);
+    if (result.ok) {
+      const sign = result.file ?? result.qrUrl ?? '';
+      if (sign && sign !== lastQrSign) {
+        lastQrSign = sign;
+        opts.logger.info(`[napcat] 登录二维码已更新: ${sign}`);
+      }
+    } else {
+      opts.logger.warn(`[napcat] ${result.message}`);
+    }
+
+    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  return { ok: false, message: '等待 NapCat 登录超时' };
+}

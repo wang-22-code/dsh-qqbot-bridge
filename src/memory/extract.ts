@@ -49,3 +49,25 @@ export const keywordExtractor: MemoryExtractor = {
     return dedupe(out);
   },
 };
+
+/**
+ * 组合抽取器：优先用 primary（如 LLM 语义抽取），失败时降级到 fallback
+ * （如 keywordExtractor），保证抽取链路健壮、不会因模型异常而丢记忆。
+ */
+export function createResilientExtractor(
+  primary: MemoryExtractor,
+  fallback: MemoryExtractor,
+  onError?: (message: string) => void,
+): MemoryExtractor {
+  return {
+    name: `${primary.name}+fallback`,
+    async extract(text: string): Promise<string[]> {
+      try {
+        return await primary.extract(text);
+      } catch (err) {
+        onError?.(err instanceof Error ? err.message : String(err));
+        return await fallback.extract(text);
+      }
+    },
+  };
+}
