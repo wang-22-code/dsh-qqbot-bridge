@@ -15,7 +15,7 @@ import { validateSecurityConfig } from '../security.js';
 import { SessionManager, type DshAgentRegistry } from '../session/index.js';
 import { createOutboundHandler } from '../transport/outbound.js';
 import { MemoryStore, handleMemoryCommand, autoCapture, defaultMemoryRoot, type MemoryExtractor } from '../memory/index.js';
-import { synthesize, detectEmotion } from '../voice/index.js';
+import { synthesize, detectEmotion, transcribe, type DshSpeechServiceLike } from '../voice/index.js';
 import {
   OneBotClient,
   OneBotApi,
@@ -27,6 +27,7 @@ import {
   shouldAccept,
   normalizeTarget,
   buildInboundText,
+  fetchVoiceAudio,
   type OneBotMessageEvent,
 } from '../transport/onebot/index.js';
 
@@ -41,6 +42,7 @@ export async function bootstrapOneBot(
   config: ImQQBotConfig,
   logger: Logger,
   extractor: MemoryExtractor,
+  speech?: DshSpeechServiceLike,
 ): Promise<void> {
   const security = validateSecurityConfig(config);
   for (const warning of security.warnings) {
@@ -111,7 +113,35 @@ export async function bootstrapOneBot(
     const senderId = String(event.user_id ?? '');
     const peerKey = `${isGroup ? 'group' : 'c2c'}:${peerId}`;
 
-    const rawText = extractText(segments);
+    let rawText = extractText(segments);
+    let voiceTranscript = '';
+    // 语音输入转写：有 record 段且启用 STT 时，取音频→转 16k mono pcm16 WAV→转写
+    const recordSeg = segments.find((s) => s.type === 'record');
+    if (recordSeg) {
+      console.log(
+        `[stt] record detected: enabled=${String(config.stt.enabled)} provider=${String(config.stt.provider)} dataKeys=${Object.keys(recordSeg.data ?? {}).join(',')}`,
+      );
+      if (config.stt.enabled && config.stt.provider !== 'off') {
+        try {
+          const audio = await fetchVoiceAudio(api, recordSeg.data ?? {}, {
+            ffmpegPath: config.stt.ffmpegPath,
+          });
+          console.log(`[stt] audio ready bytes=${audio.data.length}`);
+          const transcript = await transcribe(config.stt, audio, { dsh: speech, dshProvider: 'sensevoice-local' });
+          console.log(`[stt] transcript=${JSON.stringify(transcript)}`);
+          if (transcript) {
+            // 用转写文本替换掉 [语音] 占位符，避免模型被占位符/旧历史带偏
+            voiceTranscript = transcript;
+            const cleaned = rawText.replace(/\[语音\]/g, '').trim();
+            rawText = cleaned ? `${cleaned}\n[语音转写] ${transcript}` : `[语音转写] ${transcript}`;
+          }
+        } catch (err) {
+          const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+          console.warn(`[stt] FAIL: ${detail}`);
+          if (!rawText.trim()) rawText = '[语音]';
+        }
+      }
+    }
     if (!rawText.trim()) return;
 
     // 记忆命令：直接处理并回复，不转发给 Agent
@@ -128,6 +158,10 @@ export async function bootstrapOneBot(
     }
 
     let text = buildInboundText(event, segments, isGroup);
+    if (voiceTranscript) {
+      const cleanedText = text.replace(/\[语音\]/g, '').trim();
+      text = cleanedText ? `${cleanedText}\n[语音转写] ${voiceTranscript}` : `[语音转写] ${voiceTranscript}`;
+    }
     if (!text.trim()) return;
     if (memoryStore) {
       const prefix = memoryStore.buildPromptBlock(

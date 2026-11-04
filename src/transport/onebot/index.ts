@@ -4,6 +4,7 @@
 export { OneBotClient, type OneBotClientOptions } from './client.js';
 export { OneBotApi, type OneBotLoginInfo } from './api.js';
 export { OneBotSender } from './sender.js';
+export { fetchVoiceAudio, resolveFfmpeg, type VoiceAudio, type FetchVoiceOptions } from './media.js';
 export {
   fetchNapCatQrcode,
   pollNapCatLogin,

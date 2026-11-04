@@ -73,6 +73,25 @@ export interface VoiceConfig {
   maxChars: number;
 }
 
+export interface SttConfig {
+  /** 是否启用语音输入转写 */
+  enabled: boolean;
+  /** 转写后端：off | dsh（DSH speechToText / SenseVoice） | openai（兼容 /audio/transcriptions） */
+  provider: 'off' | 'dsh' | 'openai';
+  /** OpenAI 兼容转写服务地址（base，如 http://host:port/v1） */
+  url: string;
+  /** 转写模型名（OpenAI 兼容用） */
+  model: string;
+  /** API Key */
+  apiKey: string;
+  /** 语言提示（如 zh / en，可空） */
+  language: string;
+  /** 超时(ms) */
+  timeoutMs: number;
+  /** ffmpeg 可执行文件路径（用于把语音转 16k mono pcm16 WAV；留空则自动探测） */
+  ffmpegPath: string;
+}
+
 export interface ImQQBotConfig {
   /** 通道类型：official=腾讯官方 QQ 机器人；onebot=NapCat/OneBot v11 个人号 */
   channel: 'official' | 'onebot';
@@ -82,6 +101,8 @@ export interface ImQQBotConfig {
   memory: MemoryConfig;
   /** 情绪语音配置 */
   voice: VoiceConfig;
+  /** 语音输入转写配置 */
+  stt: SttConfig;
   /** QQ Bot AppID */
   appId: string;
   /** QQ Bot AppSecret */
@@ -193,6 +214,25 @@ export const ConfigSchema: Schema<ImQQBotConfig> = Schema.object({
     localVoice: '',
     maxChars: 1000,
   }).description('情绪语音配置'),
+  stt: Schema.object({
+    enabled: Schema.boolean().default(false).description('是否启用语音输入转写'),
+    provider: Schema.union(['off', 'dsh', 'openai']).default('off').description('转写后端：dsh=DSH speechToText/SenseVoice；openai=兼容 /audio/transcriptions'),
+    url: Schema.string().default('').description('OpenAI 兼容转写服务地址(base)'),
+    model: Schema.string().default('whisper-1').description('转写模型'),
+    apiKey: Schema.string().default('').description('转写 API Key'),
+    language: Schema.string().default('').description('语言提示(zh/en，可空)'),
+    timeoutMs: Schema.number().default(30000).description('转写超时(ms)'),
+    ffmpegPath: Schema.string().default('').description('ffmpeg 路径（留空自动探测）'),
+  }).default({
+    enabled: false,
+    provider: 'off',
+    url: '',
+    model: 'whisper-1',
+    apiKey: '',
+    language: '',
+    timeoutMs: 30000,
+    ffmpegPath: '',
+  }).description('语音输入转写配置'),
   appId: Schema.string().default('').description('QQ Bot AppID'),
   appSecret: Schema.string().default('').description('QQ Bot AppSecret'),
   provider: Schema.string().description('LLM provider name'),

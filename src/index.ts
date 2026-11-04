@@ -46,7 +46,7 @@ import {
   type MemoryExtractor,
   type LlmServiceLike,
 } from './memory/index.js';
-import { synthesize, detectEmotion } from './voice/index.js';
+import { synthesize, detectEmotion, type DshSpeechServiceLike } from './voice/index.js';
 import type { Logger, ReplyTarget } from './types.js';
 import { loadProjectEnv } from './shared/env-loader.js';
 
@@ -76,6 +76,15 @@ export async function apply(ctx: Context, config: ImQQBotConfig): Promise<void> 
   const agents = (ctx as unknown as Record<string, unknown>).agents as DshAgentRegistry;
   const logger: Logger = ((ctx as unknown as Record<string, unknown>).logger as Logger) ?? console;
   const extractor = buildMemoryExtractor(ctx, config, logger);
+  const speech = (() => {
+    try {
+      const c = ctx as unknown as { get?: (n: string) => unknown; speechToText?: unknown };
+      const svc = typeof c.get === 'function' ? c.get('speechToText') : c.speechToText;
+      return svc as DshSpeechServiceLike | undefined;
+    } catch {
+      return undefined;
+    }
+  })();
 
   console.log('[im-qqbot] apply() called');
   if (envLoad.keys.length > 0) {
@@ -85,7 +94,7 @@ export async function apply(ctx: Context, config: ImQQBotConfig): Promise<void> 
   // ── OneBot / NapCat 个人号通道 ──
   if (config.channel === 'onebot') {
     const resolvedOneBot: ImQQBotConfig = { ...config, appId: config.onebot.selfId || 'onebot' };
-    await bootstrapOneBot(ctx, agents, resolvedOneBot, logger, extractor);
+    await bootstrapOneBot(ctx, agents, resolvedOneBot, logger, extractor, speech);
     return;
   }
 
@@ -166,6 +175,18 @@ function applyEnvOverrides(config: ImQQBotConfig): void {
     if (env.BREEZE_MODEL) voice.breezeModel = env.BREEZE_MODEL;
     if (env.VOICE_API_KEY) voice.apiKey = env.VOICE_API_KEY;
     if (env.VOICE_EMOTIONAL) voice.emotional = /^(1|true|yes)$/i.test(env.VOICE_EMOTIONAL);
+  }
+
+  // 语音输入转写（STT）
+  if (config.stt) {
+    if (env.STT_ENABLED) config.stt.enabled = /^(1|true|yes)$/i.test(env.STT_ENABLED);
+    const sp = env.STT_PROVIDER;
+    if (sp === 'off' || sp === 'dsh' || sp === 'openai') config.stt.provider = sp;
+    if (env.STT_URL) config.stt.url = env.STT_URL;
+    if (env.STT_MODEL) config.stt.model = env.STT_MODEL;
+    if (env.STT_API_KEY) config.stt.apiKey = env.STT_API_KEY;
+    if (env.STT_LANGUAGE) config.stt.language = env.STT_LANGUAGE;
+    if (env.STT_FFMPEG_PATH) config.stt.ffmpegPath = env.STT_FFMPEG_PATH;
   }
 }
 

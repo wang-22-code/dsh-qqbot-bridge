@@ -80,4 +80,16 @@ export class OneBotApi {
   getLoginInfo(): Promise<OneBotLoginInfo> {
     return this.call('get_login_info', {}) as Promise<OneBotLoginInfo>;
   }
+
+  /** 取语音文件（将 silk 经网关转码为指定格式）；返回 file/url/base64 之一 */
+  getRecord(
+    file: string,
+    outFormat = 'wav',
+  ): Promise<{ file?: string; url?: string; base64?: string }> {
+    return this.call('get_record', { file, out_format: outFormat }) as Promise<{
+      file?: string;
+      url?: string;
+      base64?: string;
+    }>;
+  }
 }
