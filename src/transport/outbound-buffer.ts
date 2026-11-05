@@ -95,6 +95,13 @@ export class OutboundBuffer {
 
   /** 立即发送当前可发送内容（失败时按退避重试，超出次数保留余量） */
   async flush(): Promise<void> {
+    // 若已有 flush 在途：等待它，绝不覆盖/清空 this.inflight。
+    // 否则重入的 flush 会把 this.inflight 换成一个已 resolve 的 promise 并置 null，
+    // 让 finalize/finalizeWith 误以为没有在途发送而提前收尾，导致尾部内容静默丢失。
+    if (this.flushing) {
+      if (this.inflight) await this.inflight.catch(() => {});
+      return;
+    }
     this.inflight = this.doFlush();
     try {
       await this.inflight;
