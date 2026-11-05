@@ -81,7 +81,7 @@ export interface Transcriber {
 interface RealSpeechService {
   snapshot?: () => { providers?: Array<{ id: string; preparation?: { phase?: string; message?: string } }> };
   listProviders?: () => ReadonlyArray<{ id: string; languages?: readonly string[] }>;
-  prepare?: (id: string, opts?: { downloadSource?: string }) => void;
+  prepare?: (id: string, opts?: { downloadSource?: string }) => void | Promise<void>;
   resolve: (req: { audio: Uint8Array; providerId?: string; language?: string }) => unknown;
   transcribe: (spec: unknown, signal: AbortSignal) => Promise<{ text?: string }>;
 }
@@ -116,9 +116,11 @@ export function createDshTranscriber(
 
       if (!prepared) {
         try {
-          svc.prepare?.(id);
+          // prepare 可能是异步并返回 Promise；用 Promise.resolve 统一等待，
+          // 避免其 reject 变成未处理的 Promise 拒绝。
+          await Promise.resolve(svc.prepare?.(id));
         } catch {
-          /* provider 可能已在准备或无需 prepare，忽略 */
+          /* provider 可能已在准备或无需 prepare，忽略；就绪状态由 waitReady 判定 */
         }
         await waitReady(svc, id, opts.prepareTimeoutMs ?? 300_000);
         prepared = true;
