@@ -184,10 +184,12 @@ export class OutboundBuffer {
           break;
         }
 
-        // 前缀记账：丢弃已送达前缀（计入 sentChars），只保留未送达余量
+        // 前缀记账：丢弃已送达前缀（计入 sentChars），只保留未送达余量。
+        // 注意 sendable 可能只是 this.buffer 的可发送前缀（未闭合代码块被 fence 吸附），
+        // 必须把 sendable 之后仍未处理的部分一并保留，否则会丢失代码块尾部。
         const unsent = chunks.slice(failedAt).join('\n');
         this.sentChars += sendable.length - unsent.length;
-        this.buffer = unsent;
+        this.buffer = unsent + this.buffer.slice(sendable.length);
         attempt += 1;
 
         if (attempt > this.options.maxRetries) {
