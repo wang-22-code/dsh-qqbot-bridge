@@ -5,7 +5,7 @@
  * `get_record(out_format:"wav")` 让网关转码，再用 ffmpeg 归一化采样率/声道。
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OneBotApi } from './api.js';
@@ -70,19 +70,29 @@ export async function fetchVoiceAudio(
 
   const outPath = join(dir, 'out16k.wav');
   const ffmpeg = resolveFfmpeg(opts.ffmpegPath);
-  if (ffmpeg) {
-    const r = spawnSync(
-      ffmpeg,
-      ['-y', '-i', inputPath, '-ac', '1', '-ar', '16000', '-sample_fmt', 's16', '-c:a', 'pcm_s16le', outPath],
-      { stdio: 'ignore' },
-    );
-    if (r.status !== 0 || !existsSync(outPath)) {
-      throw new Error('ffmpeg 转码到 16k mono pcm16 失败');
+  try {
+    if (ffmpeg) {
+      // 加超时与强制结束：spawnSync 是同步阻塞，若 ffmpeg 卡住会冻结整个事件循环
+      const r = spawnSync(
+        ffmpeg,
+        ['-y', '-i', inputPath, '-ac', '1', '-ar', '16000', '-sample_fmt', 's16', '-c:a', 'pcm_s16le', outPath],
+        { stdio: 'ignore', timeout: 30000, killSignal: 'SIGKILL' },
+      );
+      if (r.error || r.signal || r.status !== 0 || !existsSync(outPath)) {
+        throw new Error('ffmpeg 转码到 16k mono pcm16 失败');
+      }
+    } else {
+      // 没有 ffmpeg：假定网关已返回可用 wav（可能采样率不符，但先降级尝试）
+      writeFileSync(outPath, readFileSync(inputPath));
     }
-  } else {
-    // 没有 ffmpeg：假定网关已返回可用 wav（可能采样率不符，但先降级尝试）
-    writeFileSync(outPath, readFileSync(inputPath));
-  }
 
-  return { data: new Uint8Array(readFileSync(outPath)), filename: 'voice.wav', mime: 'audio/wav' };
+    return { data: new Uint8Array(readFileSync(outPath)), filename: 'voice.wav', mime: 'audio/wav' };
+  } finally {
+    // 清理本次创建的临时目录，避免每条语音消息泄漏一个目录
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
 }
