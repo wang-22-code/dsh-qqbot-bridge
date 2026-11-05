@@ -56,8 +56,11 @@ export class SettingsReader {
       for (const [providerName, providerConfig] of Object.entries(llmPiAi.providers)) {
         if (Array.isArray(providerConfig?.models)) {
           for (const m of providerConfig.models) {
-            if (m.id) {
-              models.push({ provider: providerName, id: m.id, name: m.name || undefined });
+            if (m && typeof m === 'object') {
+              const entry = m as { id?: string; name?: string };
+              if (entry.id) {
+                models.push({ provider: providerName, id: entry.id, name: entry.name || undefined });
+              }
             }
           }
         }

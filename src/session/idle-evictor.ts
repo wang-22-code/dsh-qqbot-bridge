@@ -15,6 +15,8 @@ export class IdleEvictor {
   ) {
     if (timeoutMs > 0) {
       this.timer = setInterval(() => this.check(), 60_000);
+      // 回收定时器不应阻止进程退出（否则 dispose 未调用时进程无法结束）
+      this.timer.unref?.();
     }
   }
 

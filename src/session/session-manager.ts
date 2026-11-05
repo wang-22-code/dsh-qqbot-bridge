@@ -309,7 +309,9 @@ export class SessionManager {
         agent = resumed.agent;
         handle = resumed;
         this.logger.info(`resumed session: key=${key} preset=${agentPreset ?? 'none'} route=${resumeRoute ? `${resumeRoute.provider}/${resumeRoute.model}` : 'session-own'}`);
-      } catch {
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`resume 失败，改为新建会话: key=${key} reason=${reason}`);
         const composed = await this.composePreset(this.config.preset);
         agentPreset = composed.agentPreset;
         const created = await this.agents.create({
