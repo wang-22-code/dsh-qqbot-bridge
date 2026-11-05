@@ -27,6 +27,7 @@ export interface SttHttpRequest {
 
 /** 构造 OpenAI 兼容转写请求（纯函数，便于单测） */
 export function buildOpenAISttRequest(cfg: SttConfig, audio: AudioInput): SttHttpRequest {
+  if (!cfg.url) throw new Error('STT 未配置服务地址：请设置 url（环境变量 STT_URL）');
   const form = new FormData();
   form.append('file', new Blob([audio.data as unknown as ArrayBuffer], { type: audio.mime || 'audio/wav' }), audio.filename || 'audio.wav');
   form.append('model', cfg.model || 'whisper-1');
