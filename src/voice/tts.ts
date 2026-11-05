@@ -153,7 +153,10 @@ export async function synthesize(
         } catch {
           /* ignore */
         }
-        throw new Error(`TTS 服务返回 HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
+        const httpErr = new Error(`TTS 服务返回 HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
+        // 携带状态码，供下面的重试判断区分「可重试」与「配置/鉴权错误」
+        (httpErr as Error & { status?: number }).status = res.status;
+        throw httpErr;
       }
       const buf = new Uint8Array(await res.arrayBuffer());
       if (buf.length === 0) throw new Error('TTS 返回空音频');
@@ -164,6 +167,11 @@ export async function synthesize(
       return { file };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+      // 只对「可重试」错误退避重试：无状态码（网络错误）/5xx/408/429；
+      // 其余 4xx（鉴权失败、坏请求、422 等）应快速失败，避免无谓重试与延迟。
+      const status = (lastError as Error & { status?: number }).status;
+      const retryable = status === undefined || status >= 500 || status === 408 || status === 429;
+      if (!retryable) throw lastError;
       if (attempt < retries) {
         await new Promise<void>((resolve) => setTimeout(resolve, 300 * 2 ** attempt));
       }
