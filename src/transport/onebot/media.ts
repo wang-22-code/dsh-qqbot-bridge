@@ -50,27 +50,26 @@ export async function fetchVoiceAudio(
 
   const rec = await api.getRecord(fileId, 'wav');
   const dir = mkdtempSync(join(opts.tmpDir ?? tmpdir(), 'dsh-voice-'));
-
-  let inputPath: string;
-  if (rec.file && existsSync(rec.file)) {
-    inputPath = rec.file;
-  } else if (rec.url) {
-    const res = await (opts.fetchImpl ?? globalThis.fetch)(rec.url);
-    if (!res.ok) throw new Error(`下载语音失败 HTTP ${res.status}`);
-    const buf = new Uint8Array(await res.arrayBuffer());
-    inputPath = join(dir, 'in.wav');
-    writeFileSync(inputPath, Buffer.from(buf));
-  } else if (rec.base64) {
-    const b64 = rec.base64.replace(/^base64:\/\//, '');
-    inputPath = join(dir, 'in.wav');
-    writeFileSync(inputPath, Buffer.from(b64, 'base64'));
-  } else {
-    throw new Error('get_record 未返回可读取的音频');
-  }
-
-  const outPath = join(dir, 'out16k.wav');
-  const ffmpeg = resolveFfmpeg(opts.ffmpegPath);
   try {
+    let inputPath: string;
+    if (rec.file && existsSync(rec.file)) {
+      inputPath = rec.file;
+    } else if (rec.url) {
+      const res = await (opts.fetchImpl ?? globalThis.fetch)(rec.url);
+      if (!res.ok) throw new Error(`下载语音失败 HTTP ${res.status}`);
+      const buf = new Uint8Array(await res.arrayBuffer());
+      inputPath = join(dir, 'in.wav');
+      writeFileSync(inputPath, Buffer.from(buf));
+    } else if (rec.base64) {
+      const b64 = rec.base64.replace(/^base64:\/\//, '');
+      inputPath = join(dir, 'in.wav');
+      writeFileSync(inputPath, Buffer.from(b64, 'base64'));
+    } else {
+      throw new Error('get_record 未返回可读取的音频');
+    }
+
+    const outPath = join(dir, 'out16k.wav');
+    const ffmpeg = resolveFfmpeg(opts.ffmpegPath);
     if (ffmpeg) {
       // 加超时与强制结束：spawnSync 是同步阻塞，若 ffmpeg 卡住会冻结整个事件循环
       const r = spawnSync(
@@ -88,7 +87,7 @@ export async function fetchVoiceAudio(
 
     return { data: new Uint8Array(readFileSync(outPath)), filename: 'voice.wav', mime: 'audio/wav' };
   } finally {
-    // 清理本次创建的临时目录，避免每条语音消息泄漏一个目录
+    // 清理本次创建的临时目录（涵盖所有错误路径），避免每条语音消息泄漏一个目录
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {

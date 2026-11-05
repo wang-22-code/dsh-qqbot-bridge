@@ -9,7 +9,7 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fetchVoiceAudio } from '../dist/transport/onebot/media.js';
@@ -77,6 +77,26 @@ test('full chain: get_record file -> normalize -> OpenAI STT transcribe', async 
     const text = await transcribe(cfg, audio, { deps: { fetchImpl: fakeFetch } });
     assert.equal(seenUrl, 'http://127.0.0.1:9/v1/audio/transcriptions');
     assert.equal(text, '你好世界');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('fetchVoiceAudio cleans up its temp dir on error paths', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fullchain-err-'));
+  try {
+    // get_record 无 file/url/base64 -> 抛错
+    const apiNoAudio = { async getRecord() { return {}; } };
+    await assert.rejects(() => fetchVoiceAudio(apiNoAudio, { file: 'x' }, { tmpDir: dir }));
+    // url 下载失败 -> 抛错
+    const apiBadUrl = { async getRecord() { return { url: 'http://127.0.0.1:9/x.wav' }; } };
+    const failingFetch = async () => ({ ok: false, status: 500, arrayBuffer: async () => new ArrayBuffer(0) });
+    await assert.rejects(() =>
+      fetchVoiceAudio(apiBadUrl, { file: 'x' }, { tmpDir: dir, fetchImpl: failingFetch }),
+    );
+    // 两种错误路径都不应残留 dsh-voice-* 临时目录
+    const leftover = readdirSync(dir).filter((n) => n.startsWith('dsh-voice-'));
+    assert.deepEqual(leftover, []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
