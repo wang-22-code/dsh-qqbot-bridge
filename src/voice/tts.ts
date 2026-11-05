@@ -125,6 +125,9 @@ export async function synthesize(
   deps: TtsDeps = {},
 ): Promise<TtsResult> {
   if (cfg.provider === 'off') throw new Error('语音未启用');
+  if (cfg.provider === 'breezeblue' && !cfg.breezeVoice) {
+    throw new Error('BreezeBlue 未配置音色：请设置 breezeVoice（环境变量 BREEZE_VOICE_ID）');
+  }
   const clean = text.trim().slice(0, Math.max(1, cfg.maxChars));
   if (!clean) throw new Error('待合成文本为空');
 
