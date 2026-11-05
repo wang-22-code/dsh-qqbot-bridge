@@ -37,6 +37,8 @@ export class SessionManager {
   private sessions = new Map<string, SessionRecord>();
   private readonly evictor: IdleEvictor;
   private readonly modelResolver: ModelResolver;
+  /** 同一 sessionKey 正在创建中的 Promise，用于并发去重（防止 TOCTOU 重复建会话） */
+  private readonly pendingCreates = new Map<string, Promise<SessionRecord>>();
 
   constructor(
     private readonly ctx: Context,
@@ -268,8 +270,8 @@ export class SessionManager {
     }
   }
 
-  /** 获取或恢复或创建会话（get → resume → create） */
-  async getOrCreate(
+  /** 获取或恢复或创建会话（get → resume → create）；同一 key 的并发调用共享同一 Promise */
+  getOrCreate(
     scope: ChatScope,
     peerId: string,
     senderId: string,
@@ -277,7 +279,34 @@ export class SessionManager {
   ): Promise<SessionRecord> {
     const key = this.sessionKey(scope, peerId);
     const existing = this.sessions.get(key);
+    if (existing) {
+      existing.replyTarget = replyTarget;
+      existing.lastActivity = Date.now();
+      return Promise.resolve(existing);
+    }
 
+    // 并发去重：OneBot 路径没有 concurrencyGuard，两个同 peer 的消息可能同时到达。
+    // 若都在此看到 existing===undefined 就会重复 resume/create 同一 sessionId，
+    // 后者覆盖前者的 handle 造成泄漏/双 agent。这里用 pendingCreates 让后来者复用同一 Promise。
+    const inflight = this.pendingCreates.get(key);
+    if (inflight) return inflight;
+
+    const p = this.createOrResume(key, scope, peerId, senderId, replyTarget).finally(() => {
+      this.pendingCreates.delete(key);
+    });
+    this.pendingCreates.set(key, p);
+    return p;
+  }
+
+  /** 真正执行 resume/create（仅由 getOrCreate 在去重后调用） */
+  private async createOrResume(
+    key: string,
+    scope: ChatScope,
+    peerId: string,
+    senderId: string,
+    replyTarget: ReplyTarget,
+  ): Promise<SessionRecord> {
+    const existing = this.sessions.get(key);
     if (existing) {
       existing.replyTarget = replyTarget;
       existing.lastActivity = Date.now();
