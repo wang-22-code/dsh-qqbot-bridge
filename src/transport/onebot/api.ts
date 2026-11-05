@@ -33,6 +33,9 @@ export class OneBotApi {
         lastError = err;
         const message = err instanceof Error ? err.message : String(err);
         if (!isConnError(message)) throw err;
+        // 发送类 action 非幂等：超时可能意味着网关已成功投递，重试会让用户收到重复消息。
+        // 因此「超时」不重试；「未连接」等确定性失败仍然重试。
+        if (/超时|timeout/i.test(message)) throw err;
         if (attempt < retries) {
           await new Promise<void>((resolve) => setTimeout(resolve, 300 * 2 ** attempt));
         }
