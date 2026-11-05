@@ -7,7 +7,7 @@
  * - 遗忘用墓碑（forgotten 标记），不物理删除
  * - 回复前按关键词/别名召回有限条事实注入 prompt
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -122,22 +122,61 @@ export class MemoryStore {
    * 去重后写入记忆宫殿，并清空已处理的来源。返回新增条数。
    */
   async extractFromSources(peerKey: string, extractor: MemoryExtractor): Promise<number> {
-    const sources = this.readSources(peerKey);
-    if (sources.length === 0) return 0;
+    const srcPath = this.sourcesPath(peerKey);
+    if (!existsSync(srcPath)) return 0;
+
+    // 快照式处理：先把来源队列原子重命名为 .processing 文件，再处理该快照。
+    // 抽取期间新到的消息会重新写入原路径，不会被本轮的清理覆盖（避免静默丢失）。
+    const procPath = `${srcPath}.processing-${randomUUID()}`;
+    try {
+      renameSync(srcPath, procPath);
+    } catch {
+      return 0; // 被并发处理或不复存在
+    }
+
+    let sources: Array<{ at: number; source: string; text: string }> = [];
+    try {
+      sources = readFileSync(procPath, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line) as { at: number; source: string; text: string });
+    } catch {
+      sources = [];
+    }
 
     const existing = new Set(this.list(peerKey).map((f) => f.text));
     let added = 0;
-    for (const source of sources) {
-      const facts = await extractor.extract(source.text);
-      for (const raw of facts) {
-        const text = raw.trim();
-        if (!text || existing.has(text)) continue;
-        this.add(peerKey, text, 'auto');
-        existing.add(text);
-        added += 1;
+    try {
+      for (const source of sources) {
+        const facts = await extractor.extract(source.text);
+        for (const raw of facts) {
+          const text = raw.trim();
+          if (!text || existing.has(text)) continue;
+          this.add(peerKey, text, 'auto');
+          existing.add(text);
+          added += 1;
+        }
       }
+    } catch (err) {
+      // 抽取失败：把未处理快照追加回原队列（去重会避免重复），避免来源丢失
+      try {
+        appendFileSync(srcPath, readFileSync(procPath, 'utf8'), 'utf8');
+      } catch {
+        /* ignore */
+      }
+      try {
+        rmSync(procPath, { force: true });
+      } catch {
+        /* ignore */
+      }
+      throw err;
     }
-    this.clearSources(peerKey);
+
+    try {
+      rmSync(procPath, { force: true });
+    } catch {
+      /* ignore */
+    }
     return added;
   }
 
