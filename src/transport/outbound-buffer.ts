@@ -131,6 +131,11 @@ export class OutboundBuffer {
   async finalizeWith(fullText: string): Promise<void> {
     this.finalized = true;
     this.clearTimer();
+    // 若仍有在途 flush，先等它完成再改 buffer：否则会基于陈旧的 sentChars 覆盖
+    // buffer，随后在途 doFlush 的 consumeSent 再切片，导致重复或丢失尾部。
+    if (this.inflight) {
+      await this.inflight.catch(() => {});
+    }
     if (fullText.length > this.sentChars) {
       this.buffer = fullText.slice(this.sentChars);
       return this.finalize();
