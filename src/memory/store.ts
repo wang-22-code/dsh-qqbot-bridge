@@ -35,6 +35,7 @@ export function peerFileKey(peerKey: string): string {
  */
 export function searchFacts(facts: MemoryFact[], query: string, limit: number): MemoryFact[] {
   const active = facts.filter((f) => !f.forgotten);
+  if (limit <= 0) return [];
   const q = query.trim().toLowerCase();
   if (!q) return active.slice(-limit).reverse();
 
@@ -124,7 +125,7 @@ export class MemoryStore {
     const sources = this.readSources(peerKey);
     if (sources.length === 0) return 0;
 
-    const existing = new Set(this.list(peerKey, true).map((f) => f.text));
+    const existing = new Set(this.list(peerKey).map((f) => f.text));
     let added = 0;
     for (const source of sources) {
       const facts = await extractor.extract(source.text);
@@ -154,6 +155,13 @@ export class MemoryStore {
         }
       }
     } catch {
+      // 文件损坏：先备份再重置，避免下一次 persist 静默覆盖掉仍可恢复的数据
+      try {
+        const path = this.jsonPath(peerKey);
+        if (existsSync(path)) renameSync(path, `${path}.corrupt-${Date.now()}`);
+      } catch {
+        /* ignore */
+      }
       data = { version: 1, facts: [] };
     }
     this.cache.set(peerKey, data);
