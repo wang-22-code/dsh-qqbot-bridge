@@ -48,3 +48,11 @@ test('loadEnvFiles ignores missing files and reports nothing', () => {
   assert.deepEqual(res.files, []);
   assert.deepEqual(res.keys, []);
 });
+
+test('parseEnvContent parses quoted value with trailing inline comment', () => {
+  const content = 'ALLOW="id1,id2" # note\nMSG="line1\\nline2"\nSQ=\'a # b\'\n';
+  const env = parseEnvContent(content);
+  assert.equal(env.ALLOW, 'id1,id2');
+  assert.equal(env.MSG, 'line1\nline2');
+  assert.equal(env.SQ, 'a # b');
+});

@@ -30,13 +30,27 @@ export function parseEnvContent(content: string): Record<string, string> {
     if (!match) continue;
     const key = match[1] as string;
     let value = (match[2] ?? '').trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-      if (value.includes('\\n')) value = value.replace(/\\n/g, '\n');
-      if (value.includes('\\"')) value = value.replace(/\\"/g, '"');
+    const quote = value[0];
+    if (quote === '"' || quote === "'") {
+      // 找到与开头匹配的结束引号（双引号内允许 \" 转义），其后的内容（如行内注释）忽略
+      let end = -1;
+      for (let i = 1; i < value.length; i++) {
+        if (value[i] === quote && !(quote === '"' && value[i - 1] === '\\')) {
+          end = i;
+          break;
+        }
+      }
+      if (end > 0) {
+        let inner = value.slice(1, end);
+        if (quote === '"') {
+          inner = inner.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+        }
+        value = inner;
+      } else {
+        // 没有结束引号：按未加引号处理，去掉行内注释
+        const hash = value.indexOf(' #');
+        if (hash >= 0) value = value.slice(0, hash).trim();
+      }
     } else {
       // 去掉行内注释（未加引号且空格后的 #）
       const hash = value.indexOf(' #');
