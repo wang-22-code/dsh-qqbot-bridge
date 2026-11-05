@@ -27,6 +27,10 @@ export interface NapCatQrFetchOptions {
   logger: Logger;
   fetchImpl?: typeof fetch;
   outDir?: string;
+  /** 单次请求超时(ms)，默认 10000（避免 WebUI 挂起导致轮询永久阻塞） */
+  requestTimeoutMs?: number;
+  /** 中止信号（轮询被取消时一并中断在途请求） */
+  signal?: AbortSignal;
 }
 
 export interface NapCatQrFetchResult extends NapCatQrInfo {
@@ -74,9 +78,21 @@ export async function fetchNapCatQrcode(opts: NapCatQrFetchOptions): Promise<Nap
   ];
 
   let lastError = '';
+  const requestTimeoutMs = opts.requestTimeoutMs ?? 10000;
   for (const attempt of attempts) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+    const onAbort = (): void => controller.abort();
+    if (opts.signal) {
+      if (opts.signal.aborted) controller.abort();
+      else opts.signal.addEventListener('abort', onAbort, { once: true });
+    }
     try {
-      const res = await fetchImpl(`${base}${attempt.path}`, { method: attempt.method, headers });
+      const res = await fetchImpl(`${base}${attempt.path}`, {
+        method: attempt.method,
+        headers,
+        signal: controller.signal,
+      });
       if (!res.ok) {
         lastError = `HTTP ${res.status}`;
         continue;
@@ -102,7 +118,14 @@ export async function fetchNapCatQrcode(opts: NapCatQrFetchOptions): Promise<Nap
       );
       return { ok: true, ...info, ...(file ? { file } : {}), message: '已获取登录二维码' };
     } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err);
+      lastError = controller.signal.aborted
+        ? '请求超时或被中止'
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    } finally {
+      clearTimeout(timer);
+      if (opts.signal) opts.signal.removeEventListener('abort', onAbort);
     }
   }
 

@@ -52,3 +52,22 @@ test('fetchNapCatQrcode reports failure on HTTP error / empty payload', async ()
   assert.equal(res.ok, false);
   assert.match(res.message, /403|失败/);
 });
+
+test('fetchNapCatQrcode aborts a hanging request after the per-request timeout', async () => {
+  // fetch 永不返回，只有收到 abort 才 reject
+  const hanging = (_url, init) =>
+    new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(new Error('aborted')));
+    });
+  const started = Date.now();
+  const res = await fetchNapCatQrcode({
+    webuiUrl: 'http://127.0.0.1:6099',
+    logger: silent,
+    fetchImpl: hanging,
+    requestTimeoutMs: 50,
+  });
+  assert.equal(res.ok, false);
+  assert.match(res.message, /超时|中止|失败/);
+  // 两次尝试各 50ms，整体应远小于“永久挂起”
+  assert.ok(Date.now() - started < 2000);
+});
