@@ -15,6 +15,7 @@ const GFM_TABLE_LINE = /^\|.+\|$/;
  * - 优先在空行处断开
  */
 export function chunkMarkdownText(text: string, limit: number): string[] {
+  if (limit <= 0) return [text];
   if (text.length <= limit) return [text];
 
   const lines = text.split('\n');
@@ -81,5 +82,28 @@ export function chunkMarkdownText(text: string, limit: number): string[] {
   flushTable();
   if (current) chunks.push(current);
 
-  return chunks.length > 0 ? chunks : [text];
+  if (chunks.length === 0) return [text];
+  // 单行超长（无换行可切）时按 limit 硬切，避免超过平台单条长度上限被拒发/截断
+  const out: string[] = [];
+  for (const chunk of chunks) {
+    if (chunk.length <= limit) out.push(chunk);
+    else out.push(...hardSplit(chunk, limit));
+  }
+  return out;
+}
+
+/** 将单段文本按 limit 硬切（按码点迭代，避免拆断代理对以外的极端情况） */
+function hardSplit(text: string, limit: number): string[] {
+  const parts: string[] = [];
+  let cur = '';
+  for (const ch of Array.from(text)) {
+    if (cur.length + ch.length > limit) {
+      if (cur) parts.push(cur);
+      cur = ch;
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur) parts.push(cur);
+  return parts.length > 0 ? parts : [text];
 }
