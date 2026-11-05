@@ -64,3 +64,10 @@ test('peer fingerprints are stable and do not expose the OpenID', () => {
   assert.equal(value.length, 12);
   assert.equal(value.includes(openid), false);
 });
+
+test('wildcard "*" in allowlist requires explicit acknowledgement', () => {
+  const result = validateSecurityConfig(config({
+    access: { c2cMode: 'allowlist', c2cAllow: ['*'], groupMode: 'disabled', groupAllow: [] },
+  }));
+  assert.match(result.errors.join('\n'), /放行所有用户|acknowledgeOpenAccess/);
+});
