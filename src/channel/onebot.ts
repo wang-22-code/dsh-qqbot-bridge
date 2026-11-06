@@ -8,6 +8,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
+import { rmSync } from 'node:fs';
 
 import type { ImQQBotConfig } from '../config.js';
 import type { Logger } from '../types.js';
@@ -118,7 +119,7 @@ export async function bootstrapOneBot(
     // 语音输入转写：有 record 段且启用 STT 时，取音频→转 16k mono pcm16 WAV→转写
     const recordSeg = segments.find((s) => s.type === 'record');
     if (recordSeg) {
-      console.log(
+      if (config.debug) console.log(
         `[stt] record detected: enabled=${String(config.stt.enabled)} provider=${String(config.stt.provider)} dataKeys=${Object.keys(recordSeg.data ?? {}).join(',')}`,
       );
       if (config.stt.enabled && config.stt.provider !== 'off') {
@@ -126,9 +127,9 @@ export async function bootstrapOneBot(
           const audio = await fetchVoiceAudio(api, recordSeg.data ?? {}, {
             ffmpegPath: config.stt.ffmpegPath,
           });
-          console.log(`[stt] audio ready bytes=${audio.data.length}`);
+          if (config.debug) console.log(`[stt] audio ready bytes=${audio.data.length}`);
           const transcript = await transcribe(config.stt, audio, { dsh: speech, dshProvider: 'sensevoice-local' });
-          console.log(`[stt] transcript=${JSON.stringify(transcript)}`);
+          if (config.debug) console.log(`[stt] transcript=${JSON.stringify(transcript)}`);
           if (transcript) {
             // 用转写文本替换掉 [语音] 占位符，避免模型被占位符/旧历史带偏
             voiceTranscript = transcript;
@@ -218,11 +219,19 @@ export async function bootstrapOneBot(
       void synthesize(config.voice, text, emotion)
         .then(async (res) => {
           try {
-            await sender.sendVoice(record.replyTarget, res.file);
-          } catch {
-            // 语音发送失败重试一次，仍失败则保留文字回复
-            await new Promise<void>((r) => setTimeout(r, 500));
-            await sender.sendVoice(record.replyTarget, res.file);
+            try {
+              await sender.sendVoice(record.replyTarget, res.file);
+            } catch {
+              // 语音发送失败重试一次，仍失败则保留文字回复
+              await new Promise<void>((r) => setTimeout(r, 500));
+              await sender.sendVoice(record.replyTarget, res.file);
+            }
+          } finally {
+            try {
+              rmSync(res.file, { force: true });
+            } catch {
+              /* ignore */
+            }
           }
         })
         .catch((err: unknown) => {
