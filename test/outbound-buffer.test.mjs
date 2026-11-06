@@ -287,3 +287,33 @@ test('empty/whitespace buffer never triggers a send', async () => {
   await buf.finalize();
   assert.equal(sender.calls.length, 0);
 });
+
+test('re-entrant flush does not drop tail before finalizeWith (regression)', async () => {
+  const calls = [];
+  let release;
+  const gate = new Promise((r) => {
+    release = r;
+  });
+  const sender = {
+    async sendMarkdown(_target, content) {
+      calls.push(content);
+      await gate; // 保持在途，制造「发送未完成」窗口
+    },
+  };
+  const buf = new OutboundBuffer(makeRecord(), sender, 100, logger, {
+    flushIntervalMs: 0,
+    maxRetries: 1,
+    retryBaseMs: 1,
+  });
+  buf.append('AAAAA');
+  const p1 = buf.flush(); // 开始发送 'AAAAA'（挂起在 gate 上）
+  await Promise.resolve();
+  buf.append('BBBBB');
+  const p2 = buf.flush(); // 重入 flush：修复前会覆盖并清空 this.inflight
+  await Promise.resolve();
+  const pf = buf.finalizeWith('AAAAABBBBB'); // 发送仍挂起时收尾
+  release();
+  await Promise.all([p1, p2, pf]);
+  assert.deepEqual(calls, ['AAAAA', 'BBBBB']); // 无丢失、无重复
+  assert.equal(buf.text, '');
+});

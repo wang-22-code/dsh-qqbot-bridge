@@ -38,6 +38,17 @@ export function validateSecurityConfig(config: ImQQBotConfig): SecurityCheck {
   if (config.access.groupMode === 'allowlist' && config.access.groupAllow.length === 0) {
     warnings.push('群聊白名单为空：所有群聊消息都会被拒绝');
   }
+
+  // 白名单里的 "*" 会放行所有用户（SDK matcher 将 "*" 视为 match-all），
+  // 相当于隐式 open；必须像 open 一样显式确认，否则报错阻止误配。
+  if (!config.acknowledgeOpenAccess) {
+    if (config.access.c2cMode === 'allowlist' && config.access.c2cAllow.includes('*')) {
+      errors.push('私聊白名单包含 "*"（会放行所有用户）；如确实需要请显式设置 acknowledgeOpenAccess: true');
+    }
+    if (config.access.groupMode === 'allowlist' && config.access.groupAllow.includes('*')) {
+      errors.push('群聊白名单包含 "*"（会放行所有用户）；如确实需要请显式设置 acknowledgeOpenAccess: true');
+    }
+  }
   if (config.access.groupMode !== 'disabled' && !config.requireMention) {
     warnings.push('群聊已启用但未要求 @机器人，容易被普通聊天意外触发');
   }

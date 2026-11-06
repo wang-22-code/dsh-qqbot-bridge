@@ -159,3 +159,33 @@ test('extractFromSources stores facts, dedupes, and clears the queue', async () 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('extractFromSources does not lose sources appended during extraction', async () => {
+  const { store, dir } = newStore();
+  try {
+    store.recordSource('c2c:8', '记住：我喜欢猫');
+    let release;
+    const gate = new Promise((r) => {
+      release = r;
+    });
+    const slowExtractor = {
+      name: 'slow',
+      async extract(text) {
+        await gate; // 模拟 LLM 抽取耗时
+        return keywordExtractor.extract(text);
+      },
+    };
+    const p = store.extractFromSources('c2c:8', slowExtractor);
+    // 抽取进行中，新消息到达（写入原路径）
+    store.recordSource('c2c:8', '记住：我喜欢狗');
+    release();
+    const n = await p;
+    assert.ok(n >= 1);
+    // 新到的「狗」来源必须仍在队列中，不能被本轮清理吞掉
+    const remaining = store.readSources('c2c:8');
+    assert.equal(remaining.length, 1);
+    assert.match(remaining[0].text, /狗/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

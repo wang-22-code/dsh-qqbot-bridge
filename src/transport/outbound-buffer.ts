@@ -95,6 +95,13 @@ export class OutboundBuffer {
 
   /** 立即发送当前可发送内容（失败时按退避重试，超出次数保留余量） */
   async flush(): Promise<void> {
+    // 若已有 flush 在途：等待它，绝不覆盖/清空 this.inflight。
+    // 否则重入的 flush 会把 this.inflight 换成一个已 resolve 的 promise 并置 null，
+    // 让 finalize/finalizeWith 误以为没有在途发送而提前收尾，导致尾部内容静默丢失。
+    if (this.flushing) {
+      if (this.inflight) await this.inflight.catch(() => {});
+      return;
+    }
     this.inflight = this.doFlush();
     try {
       await this.inflight;
@@ -131,6 +138,11 @@ export class OutboundBuffer {
   async finalizeWith(fullText: string): Promise<void> {
     this.finalized = true;
     this.clearTimer();
+    // 若仍有在途 flush，先等它完成再改 buffer：否则会基于陈旧的 sentChars 覆盖
+    // buffer，随后在途 doFlush 的 consumeSent 再切片，导致重复或丢失尾部。
+    if (this.inflight) {
+      await this.inflight.catch(() => {});
+    }
     if (fullText.length > this.sentChars) {
       this.buffer = fullText.slice(this.sentChars);
       return this.finalize();
@@ -184,10 +196,12 @@ export class OutboundBuffer {
           break;
         }
 
-        // 前缀记账：丢弃已送达前缀（计入 sentChars），只保留未送达余量
+        // 前缀记账：丢弃已送达前缀（计入 sentChars），只保留未送达余量。
+        // 注意 sendable 可能只是 this.buffer 的可发送前缀（未闭合代码块被 fence 吸附），
+        // 必须把 sendable 之后仍未处理的部分一并保留，否则会丢失代码块尾部。
         const unsent = chunks.slice(failedAt).join('\n');
         this.sentChars += sendable.length - unsent.length;
-        this.buffer = unsent;
+        this.buffer = unsent + this.buffer.slice(sendable.length);
         attempt += 1;
 
         if (attempt > this.options.maxRetries) {

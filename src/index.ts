@@ -64,13 +64,15 @@ export async function apply(ctx: Context, config: ImQQBotConfig): Promise<void> 
   const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
   const envLoad = loadProjectEnv(process.cwd(), packageRoot);
   applyEnvOverrides(config);
-  try {
-    const v = config.voice;
-    console.log(
-      `[im-qqbot] voice config: enabled=${String(v?.enabled)} provider=${String(v?.provider)} voiceId=${String(v?.breezeVoice)} hasKey=${Boolean(v && v.apiKey)}`,
-    );
-  } catch {
-    /* ignore */
+  if (config.debug) {
+    try {
+      const v = config.voice;
+      console.log(
+        `[im-qqbot] voice config: enabled=${String(v?.enabled)} provider=${String(v?.provider)} voiceId=${String(v?.breezeVoice)} hasKey=${Boolean(v && v.apiKey)}`,
+      );
+    } catch {
+      /* ignore */
+    }
   }
 
   const agents = (ctx as unknown as Record<string, unknown>).agents as DshAgentRegistry;
@@ -113,6 +115,12 @@ export async function apply(ctx: Context, config: ImQQBotConfig): Promise<void> 
 
     // 写入 DSH_HOME/.env，不把 Secret 放进 cordis.patch.yml
     persistCredentialsToDshEnv(credentials, undefined, logger);
+
+    // 扫码用户自动加入本机私聊白名单，避免「绑定成功却被空白名单拦截」直到重启
+    if (credentials.userOpenid) {
+      process.env.QQBOT_C2C_ALLOW = credentials.userOpenid;
+      if (config.access) config.access.c2cAllow = [credentials.userOpenid];
+    }
 
     // 写入环境变量供热更新后的下次 apply 读取
     process.env.QQBOT_APPID = credentials.appId;
@@ -309,6 +317,8 @@ async function bootstrap(
       mode: config.access.groupMode,
       allow: config.access.groupAllow,
     },
+    // 频道(guild)消息默认拒绝，避免绕过 C2C/群白名单（官方通道默认 intents 含 guild）
+    guild: { mode: 'disabled' },
     onBlock: (_mCtx, reason) => {
       if (config.debug) {
         console.log(`[im-qqbot] [access-debug] Access blocked: ${reason}`);
