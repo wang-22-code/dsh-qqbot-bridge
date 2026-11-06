@@ -317,3 +317,26 @@ test('re-entrant flush does not drop tail before finalizeWith (regression)', asy
   assert.deepEqual(calls, ['AAAAA', 'BBBBB']); // 无丢失、无重复
   assert.equal(buf.text, '');
 });
+
+test('hold() defers auto-scheduling until release(); append order is preserved', async () => {
+  const sender = makeSender();
+  const buf = new OutboundBuffer(makeRecord(), sender, 100, logger, {
+    flushIntervalMs: 10,
+    maxRetries: 1,
+    retryBaseMs: 1,
+  });
+  buf.hold();
+  buf.append('AAAAA');
+  buf.append('BBBBB');
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(sender.calls.length, 0, '挂起期间不应发送');
+  assert.equal(buf.text, 'AAAAABBBBB', '文本按到达顺序累积');
+
+  buf.release();
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(sender.calls.length, 1, '释放后应增量发送一次');
+  assert.equal(sender.calls[0].content, 'AAAAABBBBB');
+
+  await buf.finalize();
+  assert.equal(buf.text, '');
+});
