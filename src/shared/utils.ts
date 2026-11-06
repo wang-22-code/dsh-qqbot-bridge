@@ -34,6 +34,11 @@ export function buildUserAgent(): string {
   return `dsh-qqbot-bridge/${PLUGIN_VERSION} (Node/${process.versions.node}; ${os.platform()})`;
 }
 
+/** 当前插件版本号（来自 package.json） */
+export function getPluginVersion(): string {
+  return PLUGIN_VERSION;
+}
+
 /**
  * 从插件安装路径推导 profile 目录（node_modules 的父目录）
  */
