@@ -23,6 +23,7 @@ import {
 } from '@tencent-connect/qqbot-nodejs';
 import type { MiddlewareContext } from '@tencent-connect/qqbot-nodejs';
 
+import { rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -291,8 +292,8 @@ async function bootstrap(
   // 1. 错误兜底（最外层洋葱皮）
   bot.use(errorHandler());
 
-  // 2. 消息过滤：bot 回声 + 消息去重
-  bot.use(messageFilter({ skipSelfEcho: false }));
+  // 2. 消息过滤：bot 回声 + 消息去重（同时跳过 bot 自身回声消息，避免回复死循环）
+  bot.use(messageFilter({ skipSelfEcho: true }));
 
   // 首次配对白名单时必须在 accessPolicy 之前输出，否则消息会先被拦截。
   // DSH 默认会过滤 SDK 的 info/debug 日志，因此显式 debug 模式使用
@@ -480,7 +481,15 @@ async function bootstrap(
       if (!record) return;
       const emotion = detectEmotion(text);
       void synthesize(config.voice, text, emotion)
-        .then((res) => bot.sendVoice(record.replyTarget, { localPath: res.file }))
+        .then((res) =>
+          bot.sendVoice(record.replyTarget, { localPath: res.file }).finally(() => {
+            try {
+              rmSync(res.file, { force: true });
+            } catch {
+              /* ignore */
+            }
+          }),
+        )
         .catch((err: unknown) => {
           const detail = err instanceof Error ? err.message : String(err);
           logger.warn(`[voice] 官方通道语音发送失败（已保留文字回复）: ${detail}`);

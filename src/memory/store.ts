@@ -7,12 +7,16 @@
  * - 遗忘用墓碑（forgotten 标记），不物理删除
  * - 回复前按关键词/别名召回有限条事实注入 prompt
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { MemoryFact, MemoryFileData } from './types.js';
 import type { MemoryExtractor } from './extract.js';
+
+/** 来源队列上限：超过阈值时仅保留最近若干行，防止无上限增长 */
+const MAX_SOURCES_LINES = 500;
+const MAX_SOURCES_BYTES = 256 * 1024;
 
 /** 默认记忆根目录：$DSH_HOME/dsh-qqbot-bridge/memory-palace */
 export function defaultMemoryRoot(): string {
@@ -91,6 +95,17 @@ export class MemoryStore {
       `${JSON.stringify({ at: Date.now(), source, text: trimmed })}\n`,
       'utf8',
     );
+    // 防止来源队列无上限增长（例如 flush 从未运行）：超过字节阈值时仅保留最近 MAX_SOURCES_LINES 行
+    try {
+      const p = this.sourcesPath(peerKey);
+      if (statSync(p).size > MAX_SOURCES_BYTES) {
+        const lines = readFileSync(p, 'utf8').split('\n').filter((line) => line.trim());
+        const kept = lines.slice(-MAX_SOURCES_LINES);
+        writeFileSync(p, kept.length ? `${kept.join('\n')}\n` : '', 'utf8');
+      }
+    } catch {
+      /* ignore */
+    }
   }
 
   /** 读取来源队列（用于整理/测试） */

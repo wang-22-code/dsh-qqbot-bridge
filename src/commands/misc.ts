@@ -3,6 +3,7 @@
  */
 import type { SlashCommand } from '@tencent-connect/qqbot-nodejs';
 import type { CommandDeps } from './types.js';
+import { getPluginVersion } from '../shared/index.js';
 
 /** /bot-ping — 连通性测试 */
 export function pingCommand(): SlashCommand {
@@ -21,7 +22,7 @@ export function versionCommand({ manager }: CommandDeps): SlashCommand {
     handler: () => {
       const current = manager.getEffectiveModel('c2c', '');
       const modelInfo = current ? `${current.provider}/${current.model}` : '宿主默认';
-      return `dsh-qqbot v0.1.0 | model: ${modelInfo}`;
+      return `dsh-qqbot v${getPluginVersion()} | model: ${modelInfo}`;
     },
   };
 }

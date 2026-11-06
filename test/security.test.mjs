@@ -46,6 +46,17 @@ test('deepseek-official without DEEPSEEK_API_KEY warns', () => {
   }
 });
 
+test('omitted provider without DEEPSEEK_API_KEY warns', () => {
+  const saved = process.env.DEEPSEEK_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  try {
+    const result = validateSecurityConfig(config());
+    assert.match(result.warnings.join('\n'), /DEEPSEEK_API_KEY/);
+  } finally {
+    if (saved) process.env.DEEPSEEK_API_KEY = saved;
+  }
+});
+
 test('other provider without DEEPSEEK_API_KEY does not warn', () => {
   const saved = process.env.DEEPSEEK_API_KEY;
   delete process.env.DEEPSEEK_API_KEY;

@@ -121,7 +121,11 @@ export class QqApprovalController {
       return true;
     }
 
-    this.settle(command.code, command.outcome);
+    const settled = this.settle(command.code, command.outcome);
+    if (!settled) {
+      await this.sender.sendMarkdown(mCtx.replyTarget, '该权限申请不存在或已过期。');
+      return true;
+    }
     await this.sender.sendMarkdown(
       mCtx.replyTarget,
       command.outcome === 'allowed-once' ? '✅ 已允许本次操作。' : '❌ 已拒绝本次操作。',
@@ -133,15 +137,16 @@ export class QqApprovalController {
     for (const code of [...this.pending.keys()]) this.settle(code, 'cancelled');
   }
 
-  private settle(code: string, outcome: ApprovalOutcome): void {
+  private settle(code: string, outcome: ApprovalOutcome): boolean {
     const pending = this.pending.get(code);
-    if (!pending) return;
+    if (!pending) return false;
     this.pending.delete(code);
     clearTimeout(pending.timer);
     if (pending.signal && pending.onAbort) {
       pending.signal.removeEventListener('abort', pending.onAbort);
     }
     pending.resolve(outcome);
+    return true;
   }
 }
 

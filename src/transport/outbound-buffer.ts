@@ -44,6 +44,7 @@ export class OutboundBuffer {
   private flushing = false;
   private finalized = false;
   private gaveUp = false;
+  private held = false;
   private sentChars = 0;
   private inflight: Promise<void> | null = null;
   private finalizePromise: Promise<void> | null = null;
@@ -67,11 +68,29 @@ export class OutboundBuffer {
     this.options = { ...DEFAULT_OUTBOUND_OPTIONS, ...options };
   }
 
-  /** 追加文本增量（options.flushIntervalMs > 0 时自动调度增量下发） */
+  /** 追加文本增量（options.flushIntervalMs > 0 且未挂起时自动调度增量下发） */
   append(text: string): void {
     if (this.finalized) return;
     this.buffer += text;
-    if (this.options.flushIntervalMs > 0) this.scheduleSend(this.options.flushIntervalMs);
+    if (!this.held && this.options.flushIntervalMs > 0) this.scheduleSend(this.options.flushIntervalMs);
+  }
+
+  /**
+   * 暂时挂起自动调度：文本仍按到达顺序累积，但不触发定时发送。
+   * 用于「上一回合 finalize 尚未结束」时先有序缓存，避免跨回合乱序。
+   */
+  hold(): void {
+    this.held = true;
+    this.clearTimer();
+  }
+
+  /** 解除挂起；若有累积内容，重新安排一次增量发送 */
+  release(): void {
+    if (!this.held) return;
+    this.held = false;
+    if (this.options.flushIntervalMs > 0 && this.buffer.trim()) {
+      this.scheduleSend(this.options.flushIntervalMs);
+    }
   }
 
   /** 获取当前累积文本 */

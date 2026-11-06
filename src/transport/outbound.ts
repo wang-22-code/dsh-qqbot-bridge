@@ -108,11 +108,14 @@ function handleChunk(
       },
     });
     buffers.set(sessionId, buffer);
-    // 首个 chunk 前先等上一回合 finalize 结束，保证回合间消息有序
+    // 首个 chunk 立即 append（保证与后续 chunk 的先后顺序），但先挂起自动调度，
+    // 等上一回合 finalize 结束后再开始增量发送，避免跨回合乱序。
+    buffer.hold();
+    buffer.append(chunk.text!);
     void waitSettledChain(settling, sessionId).then(() => {
       // 等待期间 buffer 可能已被 turn/end 清理，重新校验
       if (buffers.get(sessionId) !== buffer) return;
-      buffer!.append(chunk.text!);
+      buffer!.release();
     });
     return;
   }
