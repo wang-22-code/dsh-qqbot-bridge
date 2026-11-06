@@ -71,6 +71,16 @@ export interface VoiceConfig {
   localVoice: string;
   /** 单次合成最大字符数 */
   maxChars: number;
+  /** 是否对合成语音做后处理（放慢/去长停顿/响度归一/首尾补静音），默认 true */
+  polish: boolean;
+  /** 后处理语速（1=原速，0.9=放慢10%） */
+  speechTempo: number;
+  /** 后处理开头静音(ms) */
+  leadSilenceMs: number;
+  /** 后处理后结尾补静音(ms)（防 SILK 转码吃尾音） */
+  tailPadMs: number;
+  /** ffmpeg 路径（后处理用，留空自动探测） */
+  ffmpegPath: string;
 }
 
 export interface SttConfig {
@@ -197,6 +207,11 @@ export const ConfigSchema: Schema<ImQQBotConfig> = Schema.object({
     localModel: Schema.string().default('audiocpp').description('本地模型名'),
     localVoice: Schema.string().default('').description('本地音色'),
     maxChars: Schema.number().default(1000).description('单次合成最大字符数'),
+    polish: Schema.boolean().default(true).description('是否对合成语音做后处理（放慢/去长停顿/响度归一/首尾补静音）'),
+    speechTempo: Schema.number().default(0.9).description('后处理语速（1=原速，0.9=放慢10%）'),
+    leadSilenceMs: Schema.number().default(200).description('后处理开头静音(ms)'),
+    tailPadMs: Schema.number().default(350).description('后处理结尾补静音(ms)'),
+    ffmpegPath: Schema.string().default('').description('ffmpeg 路径（后处理用，留空自动探测）'),
   }).default({
     enabled: false,
     provider: 'off',
@@ -213,6 +228,11 @@ export const ConfigSchema: Schema<ImQQBotConfig> = Schema.object({
     localModel: 'audiocpp',
     localVoice: '',
     maxChars: 1000,
+    polish: true,
+    speechTempo: 0.9,
+    leadSilenceMs: 200,
+    tailPadMs: 350,
+    ffmpegPath: '',
   }).description('情绪语音配置'),
   stt: Schema.object({
     enabled: Schema.boolean().default(false).description('是否启用语音输入转写'),

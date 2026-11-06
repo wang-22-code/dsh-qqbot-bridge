@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { VoiceConfig } from '../config.js';
+import { polishWav } from './polish.js';
 
 export interface TtsHttpRequest {
   url: string;
@@ -167,7 +168,17 @@ export async function synthesize(
       const dir = deps.tmpDir ?? tmpdir();
       const file = join(dir, `dsh-tts-${randomUUID()}.wav`);
       writeFileSync(file, buf);
-      return { file };
+      // 后处理：放慢/去长停顿/响度归一/首尾补静音，让语音更像人且尾部不被 SILK 截断
+      const polished =
+        cfg.polish === false
+          ? file
+          : polishWav(file, {
+              ffmpegPath: cfg.ffmpegPath,
+              tempo: cfg.speechTempo,
+              leadMs: cfg.leadSilenceMs,
+              tailMs: cfg.tailPadMs,
+            });
+      return { file: polished };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       // 只对「可重试」错误退避重试：无状态码（网络错误）/5xx/408/429；
