@@ -65,7 +65,7 @@ export function validateSecurityConfig(config: ImQQBotConfig): SecurityCheck {
 
 /** 判断是否路由到 DeepSeek 官方接口（该路由必须提供 DEEPSEEK_API_KEY） */
 function usesDeepSeekProvider(config: ImQQBotConfig): boolean {
-  return config.provider === 'deepseek-official';
+  return config.provider === 'deepseek-official' || config.provider === undefined;
 }
 
 /** Stable pseudonym for logs; does not expose the QQ OpenID itself. */
