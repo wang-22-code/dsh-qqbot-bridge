@@ -7,7 +7,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import type { ModelRoute, ModelEntry } from './types.js';
 
 /** settings.yaml 中的 provider 配置结构 */
@@ -56,8 +56,11 @@ export class SettingsReader {
       for (const [providerName, providerConfig] of Object.entries(llmPiAi.providers)) {
         if (Array.isArray(providerConfig?.models)) {
           for (const m of providerConfig.models) {
-            if (m.id) {
-              models.push({ provider: providerName, id: m.id, name: m.name || undefined });
+            if (m && typeof m === 'object') {
+              const entry = m as { id?: string; name?: string };
+              if (entry.id) {
+                models.push({ provider: providerName, id: entry.id, name: entry.name || undefined });
+              }
             }
           }
         }

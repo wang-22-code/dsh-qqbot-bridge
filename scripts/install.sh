@@ -6,11 +6,11 @@
 # 无需 DSH 源码，无需 workspace 链接。
 #
 # 用法：
-#   sh install.sh                                            # 安装默认包最新版本
-#   sh install.sh --version 0.2.0                            # 指定版本
-#   sh install.sh --pkg @myorg/my-plugin                     # 指定包名
-#   sh install.sh --pkg @myorg/my-plugin --version 1.0.0     # 指定包名+版本
-#   sh install.sh --registry https://registry.npmmirror.com  # 指定 npm registry
+#   sh scripts/install.sh                                            # 安装默认包最新版本
+#   sh scripts/install.sh --version 0.2.0                            # 指定版本
+#   sh scripts/install.sh --pkg @myorg/my-plugin                     # 指定包名
+#   sh scripts/install.sh --pkg @myorg/my-plugin --version 1.0.0     # 指定包名+版本
+#   sh scripts/install.sh --registry https://registry.npmmirror.com  # 指定 npm registry
 set -eu
 
 # ── 默认值 ──
@@ -39,7 +39,7 @@ while [ $# -gt 0 ]; do
     --profile=*)
       PROFILE="${1#--profile=}" ;;
     -h|--help)
-      echo "用法: sh install.sh [选项]"
+      echo "用法: sh scripts/install.sh [选项]"
       echo
       echo "选项:"
       echo "  --pkg <name>        指定 npm 包名 (默认: dsh-qqbot-bridge)"

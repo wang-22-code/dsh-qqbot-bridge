@@ -44,6 +44,7 @@ export class OutboundBuffer {
   private flushing = false;
   private finalized = false;
   private gaveUp = false;
+  private held = false;
   private sentChars = 0;
   private inflight: Promise<void> | null = null;
   private finalizePromise: Promise<void> | null = null;
@@ -67,11 +68,29 @@ export class OutboundBuffer {
     this.options = { ...DEFAULT_OUTBOUND_OPTIONS, ...options };
   }
 
-  /** 追加文本增量（options.flushIntervalMs > 0 时自动调度增量下发） */
+  /** 追加文本增量（options.flushIntervalMs > 0 且未挂起时自动调度增量下发） */
   append(text: string): void {
     if (this.finalized) return;
     this.buffer += text;
-    if (this.options.flushIntervalMs > 0) this.scheduleSend(this.options.flushIntervalMs);
+    if (!this.held && this.options.flushIntervalMs > 0) this.scheduleSend(this.options.flushIntervalMs);
+  }
+
+  /**
+   * 暂时挂起自动调度：文本仍按到达顺序累积，但不触发定时发送。
+   * 用于「上一回合 finalize 尚未结束」时先有序缓存，避免跨回合乱序。
+   */
+  hold(): void {
+    this.held = true;
+    this.clearTimer();
+  }
+
+  /** 解除挂起；若有累积内容，重新安排一次增量发送 */
+  release(): void {
+    if (!this.held) return;
+    this.held = false;
+    if (this.options.flushIntervalMs > 0 && this.buffer.trim()) {
+      this.scheduleSend(this.options.flushIntervalMs);
+    }
   }
 
   /** 获取当前累积文本 */
@@ -95,6 +114,13 @@ export class OutboundBuffer {
 
   /** 立即发送当前可发送内容（失败时按退避重试，超出次数保留余量） */
   async flush(): Promise<void> {
+    // 若已有 flush 在途：等待它，绝不覆盖/清空 this.inflight。
+    // 否则重入的 flush 会把 this.inflight 换成一个已 resolve 的 promise 并置 null，
+    // 让 finalize/finalizeWith 误以为没有在途发送而提前收尾，导致尾部内容静默丢失。
+    if (this.flushing) {
+      if (this.inflight) await this.inflight.catch(() => {});
+      return;
+    }
     this.inflight = this.doFlush();
     try {
       await this.inflight;
@@ -131,6 +157,11 @@ export class OutboundBuffer {
   async finalizeWith(fullText: string): Promise<void> {
     this.finalized = true;
     this.clearTimer();
+    // 若仍有在途 flush，先等它完成再改 buffer：否则会基于陈旧的 sentChars 覆盖
+    // buffer，随后在途 doFlush 的 consumeSent 再切片，导致重复或丢失尾部。
+    if (this.inflight) {
+      await this.inflight.catch(() => {});
+    }
     if (fullText.length > this.sentChars) {
       this.buffer = fullText.slice(this.sentChars);
       return this.finalize();
@@ -184,10 +215,12 @@ export class OutboundBuffer {
           break;
         }
 
-        // 前缀记账：丢弃已送达前缀（计入 sentChars），只保留未送达余量
+        // 前缀记账：丢弃已送达前缀（计入 sentChars），只保留未送达余量。
+        // 注意 sendable 可能只是 this.buffer 的可发送前缀（未闭合代码块被 fence 吸附），
+        // 必须把 sendable 之后仍未处理的部分一并保留，否则会丢失代码块尾部。
         const unsent = chunks.slice(failedAt).join('\n');
         this.sentChars += sendable.length - unsent.length;
-        this.buffer = unsent;
+        this.buffer = unsent + this.buffer.slice(sendable.length);
         attempt += 1;
 
         if (attempt > this.options.maxRetries) {

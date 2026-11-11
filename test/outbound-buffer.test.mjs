@@ -287,3 +287,56 @@ test('empty/whitespace buffer never triggers a send', async () => {
   await buf.finalize();
   assert.equal(sender.calls.length, 0);
 });
+
+test('re-entrant flush does not drop tail before finalizeWith (regression)', async () => {
+  const calls = [];
+  let release;
+  const gate = new Promise((r) => {
+    release = r;
+  });
+  const sender = {
+    async sendMarkdown(_target, content) {
+      calls.push(content);
+      await gate; // 保持在途，制造「发送未完成」窗口
+    },
+  };
+  const buf = new OutboundBuffer(makeRecord(), sender, 100, logger, {
+    flushIntervalMs: 0,
+    maxRetries: 1,
+    retryBaseMs: 1,
+  });
+  buf.append('AAAAA');
+  const p1 = buf.flush(); // 开始发送 'AAAAA'（挂起在 gate 上）
+  await Promise.resolve();
+  buf.append('BBBBB');
+  const p2 = buf.flush(); // 重入 flush：修复前会覆盖并清空 this.inflight
+  await Promise.resolve();
+  const pf = buf.finalizeWith('AAAAABBBBB'); // 发送仍挂起时收尾
+  release();
+  await Promise.all([p1, p2, pf]);
+  assert.deepEqual(calls, ['AAAAA', 'BBBBB']); // 无丢失、无重复
+  assert.equal(buf.text, '');
+});
+
+test('hold() defers auto-scheduling until release(); append order is preserved', async () => {
+  const sender = makeSender();
+  const buf = new OutboundBuffer(makeRecord(), sender, 100, logger, {
+    flushIntervalMs: 10,
+    maxRetries: 1,
+    retryBaseMs: 1,
+  });
+  buf.hold();
+  buf.append('AAAAA');
+  buf.append('BBBBB');
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(sender.calls.length, 0, '挂起期间不应发送');
+  assert.equal(buf.text, 'AAAAABBBBB', '文本按到达顺序累积');
+
+  buf.release();
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(sender.calls.length, 1, '释放后应增量发送一次');
+  assert.equal(sender.calls[0].content, 'AAAAABBBBB');
+
+  await buf.finalize();
+  assert.equal(buf.text, '');
+});

@@ -14,7 +14,105 @@ export interface AccessControlConfig {
   groupAllow: string[];
 }
 
+export interface OneBotConfig {
+  /** OneBot v11 正向 WebSocket 地址（NapCat 等） */
+  wsUrl: string;
+  /** 访问令牌（OneBot access_token，可留空） */
+  accessToken: string;
+  /** 机器人自身 QQ 号（用于 @ 检测；留空则连接后自动获取） */
+  selfId: string;
+  /** 断线重连最大间隔(ms) */
+  reconnectMaxMs: number;
+  /** NapCat WebUI 地址（可选，用于查询登录二维码） */
+  webuiUrl: string;
+  /** NapCat WebUI Token（可选） */
+  webuiToken: string;
+}
+
+export interface MemoryConfig {
+  /** 是否启用记忆宫殿 */
+  enabled: boolean;
+  /** 记忆根目录（留空则用 $DSH_HOME/dsh-qqbot-bridge/memory-palace） */
+  dir: string;
+  /** 回复前最多召回的事实条数 */
+  recallLimit: number;
+  /** 注入 prompt 的记忆最大字符数 */
+  maxChars: number;
+}
+
+export interface VoiceConfig {
+  /** 是否启用语音回复 */
+  enabled: boolean;
+  /** 语音服务类型 */
+  provider: 'off' | 'breezeblue' | 'openai' | 'local';
+  /** 是否启用情绪指令 */
+  emotional: boolean;
+  /** API Key（BreezeBlue 与 OpenAI 兼容用） */
+  apiKey: string;
+  /** BreezeBlue 服务地址 */
+  breezeUrl: string;
+  /** BreezeBlue 模型 */
+  breezeModel: string;
+  /** BreezeBlue 音色 id */
+  breezeVoice: string;
+  /** 情绪强度 guidance_scale */
+  guidanceScale: number;
+  /** OpenAI 兼容地址 */
+  openaiUrl: string;
+  /** OpenAI 兼容模型 */
+  openaiModel: string;
+  /** OpenAI 兼容音色 */
+  openaiVoice: string;
+  /** 本地 audiocpp 地址 */
+  localUrl: string;
+  /** 本地模型名 */
+  localModel: string;
+  /** 本地音色 */
+  localVoice: string;
+  /** 单次合成最大字符数 */
+  maxChars: number;
+  /** 是否对合成语音做后处理（放慢/去长停顿/响度归一/首尾补静音），默认 true */
+  polish: boolean;
+  /** 后处理语速（1=原速，0.9=放慢10%） */
+  speechTempo: number;
+  /** 后处理开头静音(ms) */
+  leadSilenceMs: number;
+  /** 后处理后结尾补静音(ms)（防 SILK 转码吃尾音） */
+  tailPadMs: number;
+  /** ffmpeg 路径（后处理用，留空自动探测） */
+  ffmpegPath: string;
+}
+
+export interface SttConfig {
+  /** 是否启用语音输入转写 */
+  enabled: boolean;
+  /** 转写后端：off | dsh（DSH speechToText / SenseVoice） | openai（兼容 /audio/transcriptions） */
+  provider: 'off' | 'dsh' | 'openai';
+  /** OpenAI 兼容转写服务地址（base，如 http://host:port/v1） */
+  url: string;
+  /** 转写模型名（OpenAI 兼容用） */
+  model: string;
+  /** API Key */
+  apiKey: string;
+  /** 语言提示（如 zh / en，可空） */
+  language: string;
+  /** 超时(ms) */
+  timeoutMs: number;
+  /** ffmpeg 可执行文件路径（用于把语音转 16k mono pcm16 WAV；留空则自动探测） */
+  ffmpegPath: string;
+}
+
 export interface ImQQBotConfig {
+  /** 通道类型：official=腾讯官方 QQ 机器人；onebot=NapCat/OneBot v11 个人号 */
+  channel: 'official' | 'onebot';
+  /** OneBot 通道配置 */
+  onebot: OneBotConfig;
+  /** 记忆宫殿配置 */
+  memory: MemoryConfig;
+  /** 情绪语音配置 */
+  voice: VoiceConfig;
+  /** 语音输入转写配置 */
+  stt: SttConfig;
   /** QQ Bot AppID */
   appId: string;
   /** QQ Bot AppSecret */
@@ -66,6 +164,95 @@ export interface ImQQBotConfig {
 }
 
 export const ConfigSchema: Schema<ImQQBotConfig> = Schema.object({
+  channel: Schema.union(['official', 'onebot']).default('official').description('通道类型：official=腾讯官方QQ机器人；onebot=NapCat/OneBot v11个人号'),
+  onebot: Schema.object({
+    wsUrl: Schema.string().default('ws://127.0.0.1:3001').description('OneBot v11 正向 WebSocket 地址'),
+    accessToken: Schema.string().default('').description('OneBot access_token（可留空）'),
+    selfId: Schema.string().default('').description('机器人自身 QQ 号（留空则自动获取）'),
+    reconnectMaxMs: Schema.number().default(30000).description('断线重连最大间隔(ms)'),
+    webuiUrl: Schema.string().default('').description('NapCat WebUI 地址（用于查询登录二维码）'),
+    webuiToken: Schema.string().default('').description('NapCat WebUI Token'),
+  }).default({
+    wsUrl: 'ws://127.0.0.1:3001',
+    accessToken: '',
+    selfId: '',
+    reconnectMaxMs: 30000,
+    webuiUrl: '',
+    webuiToken: '',
+  }).description('OneBot 通道配置'),
+  memory: Schema.object({
+    enabled: Schema.boolean().default(true).description('是否启用记忆宫殿'),
+    dir: Schema.string().default('').description('记忆根目录（留空使用默认）'),
+    recallLimit: Schema.number().default(6).description('回复前最多召回事实条数'),
+    maxChars: Schema.number().default(3600).description('注入 prompt 的记忆最大字符数'),
+  }).default({
+    enabled: true,
+    dir: '',
+    recallLimit: 6,
+    maxChars: 3600,
+  }).description('记忆宫殿配置'),
+  voice: Schema.object({
+    enabled: Schema.boolean().default(false).description('是否启用语音回复'),
+    provider: Schema.union(['off', 'breezeblue', 'openai', 'local']).default('off').description('语音服务类型'),
+    emotional: Schema.boolean().default(true).description('是否启用情绪指令'),
+    apiKey: Schema.string().default('').description('API Key'),
+    breezeUrl: Schema.string().default('https://api.breeze.blue/v1').description('BreezeBlue 服务地址'),
+    breezeModel: Schema.string().default('breeze-tts-2').description('BreezeBlue 模型'),
+    breezeVoice: Schema.string().default('').description('BreezeBlue 音色 id'),
+    guidanceScale: Schema.number().default(1.0).description('情绪强度 guidance_scale'),
+    openaiUrl: Schema.string().default('https://api.openai.com/v1').description('OpenAI 兼容地址'),
+    openaiModel: Schema.string().default('tts-1').description('OpenAI 兼容模型'),
+    openaiVoice: Schema.string().default('alloy').description('OpenAI 兼容音色'),
+    localUrl: Schema.string().default('http://127.0.0.1:3900/v1').description('本地 audiocpp 地址'),
+    localModel: Schema.string().default('audiocpp').description('本地模型名'),
+    localVoice: Schema.string().default('').description('本地音色'),
+    maxChars: Schema.number().default(1000).description('单次合成最大字符数'),
+    polish: Schema.boolean().default(true).description('是否对合成语音做后处理（放慢/去长停顿/响度归一/首尾补静音）'),
+    speechTempo: Schema.number().default(0.9).description('后处理语速（1=原速，0.9=放慢10%）'),
+    leadSilenceMs: Schema.number().default(200).description('后处理开头静音(ms)'),
+    tailPadMs: Schema.number().default(350).description('后处理结尾补静音(ms)'),
+    ffmpegPath: Schema.string().default('').description('ffmpeg 路径（后处理用，留空自动探测）'),
+  }).default({
+    enabled: false,
+    provider: 'off',
+    emotional: true,
+    apiKey: '',
+    breezeUrl: 'https://api.breeze.blue/v1',
+    breezeModel: 'breeze-tts-2',
+    breezeVoice: '',
+    guidanceScale: 1.0,
+    openaiUrl: 'https://api.openai.com/v1',
+    openaiModel: 'tts-1',
+    openaiVoice: 'alloy',
+    localUrl: 'http://127.0.0.1:3900/v1',
+    localModel: 'audiocpp',
+    localVoice: '',
+    maxChars: 1000,
+    polish: true,
+    speechTempo: 0.9,
+    leadSilenceMs: 200,
+    tailPadMs: 350,
+    ffmpegPath: '',
+  }).description('情绪语音配置'),
+  stt: Schema.object({
+    enabled: Schema.boolean().default(false).description('是否启用语音输入转写'),
+    provider: Schema.union(['off', 'dsh', 'openai']).default('off').description('转写后端：dsh=DSH speechToText/SenseVoice；openai=兼容 /audio/transcriptions'),
+    url: Schema.string().default('').description('OpenAI 兼容转写服务地址(base)'),
+    model: Schema.string().default('whisper-1').description('转写模型'),
+    apiKey: Schema.string().default('').description('转写 API Key'),
+    language: Schema.string().default('').description('语言提示(zh/en，可空)'),
+    timeoutMs: Schema.number().default(30000).description('转写超时(ms)'),
+    ffmpegPath: Schema.string().default('').description('ffmpeg 路径（留空自动探测）'),
+  }).default({
+    enabled: false,
+    provider: 'off',
+    url: '',
+    model: 'whisper-1',
+    apiKey: '',
+    language: '',
+    timeoutMs: 30000,
+    ffmpegPath: '',
+  }).description('语音输入转写配置'),
   appId: Schema.string().default('').description('QQ Bot AppID'),
   appSecret: Schema.string().default('').description('QQ Bot AppSecret'),
   provider: Schema.string().description('LLM provider name'),

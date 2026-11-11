@@ -14,3 +14,15 @@ qrcode*.txt
 *.tgz
 *.log
 .DS_Store
+.pnpm-store/
+.runtime-plugin.log
+e2e-actions.jsonl
+e2e-result.json
+e2e-live.jsonl
+tmp-breeze-key.json
+.runtime-stt.log
+.runtime-napcat.log
+.runtime-napcat.err.log
+.runtime-matrix.log
+.key.txt
+.voice-samples/

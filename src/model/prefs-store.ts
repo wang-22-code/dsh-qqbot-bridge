@@ -4,7 +4,7 @@
  * 隔离文件 I/O 操作，便于单元测试时 mock。
  * 存储路径：~/.dsh-qqbot/model-prefs.json
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import type { ModelRoute } from './types.js';
@@ -94,6 +94,13 @@ export class PrefsStore {
         }
       }
     } catch (err) {
+      try {
+        if (existsSync(this.prefsPath)) {
+          renameSync(this.prefsPath, `${this.prefsPath}.corrupt-${Date.now()}`);
+        }
+      } catch {
+        /* ignore */
+      }
       this.debugLog?.(`loadPrefs failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -105,7 +112,9 @@ export class PrefsStore {
         overrides: Object.fromEntries(this.overrides.entries()),
         sessionIds: Object.fromEntries(this.sessionIds.entries()),
       };
-      writeFileSync(this.prefsPath, JSON.stringify(data, null, 2), 'utf8');
+      const tmp = `${this.prefsPath}.${process.pid}.${Date.now()}.tmp`;
+      writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+      renameSync(tmp, this.prefsPath);
     } catch (err) {
       this.debugLog?.(`writePrefs failed: ${err instanceof Error ? err.message : String(err)}`);
     }

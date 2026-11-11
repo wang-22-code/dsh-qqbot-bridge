@@ -46,6 +46,17 @@ test('deepseek-official without DEEPSEEK_API_KEY warns', () => {
   }
 });
 
+test('omitted provider without DEEPSEEK_API_KEY warns', () => {
+  const saved = process.env.DEEPSEEK_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  try {
+    const result = validateSecurityConfig(config());
+    assert.match(result.warnings.join('\n'), /DEEPSEEK_API_KEY/);
+  } finally {
+    if (saved) process.env.DEEPSEEK_API_KEY = saved;
+  }
+});
+
 test('other provider without DEEPSEEK_API_KEY does not warn', () => {
   const saved = process.env.DEEPSEEK_API_KEY;
   delete process.env.DEEPSEEK_API_KEY;
@@ -63,4 +74,11 @@ test('peer fingerprints are stable and do not expose the OpenID', () => {
   assert.equal(value, peerFingerprint(openid));
   assert.equal(value.length, 12);
   assert.equal(value.includes(openid), false);
+});
+
+test('wildcard "*" in allowlist requires explicit acknowledgement', () => {
+  const result = validateSecurityConfig(config({
+    access: { c2cMode: 'allowlist', c2cAllow: ['*'], groupMode: 'disabled', groupAllow: [] },
+  }));
+  assert.match(result.errors.join('\n'), /放行所有用户|acknowledgeOpenAccess/);
 });

@@ -19,12 +19,10 @@
     "cordis.patch.yml",
     "README.md",
     "CHANGELOG.md",
-    "SECURITY.md",
     "docs",
     "LICENSE",
-    "NOTICE",
-    "install.sh",
-    "install.ps1"
+    "scripts/install.sh",
+    "scripts/install.ps1"
   ],
   "engines": {
     "node": ">=22"
