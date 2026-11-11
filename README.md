@@ -166,6 +166,45 @@ chmod +x scripts/dev-start.sh
 > [!CAUTION]
 > **必须安装 Linux 版 Node ≥ 22**（如 `nvm install 22`）。WSL 互操作会把 Windows 版 `node.exe` 暴露进 `PATH`，脚本检测到 `/mnt/...` 路径会直接拒绝并给出安装指引——否则会出现「终端无输出、Windows 桌面弹报错框」的静默崩溃。其余流程与 Linux/macOS 完全一致。
 
+### Linux/macOS：从源码一键启动
+
+脚本会自动检查环境：
+
+- node 未安装 → 报错并提示先手动安装 Node.js >= 22（https://nodejs.org）；
+- pnpm 缺失 → 自动执行 `corepack enable`；
+- DSH CLI 缺失 → 自动安装 `@deepseek-ai/dsh` 到 `$DSH_HOME/profiles`（含 pnpm 11 必需的 `allowBuilds` 配置，避免原生依赖构建被拦截）；
+- node-pty 原生模块缺失 → 自动重建、必要时源码编译（国内网络常见问题）；
+- `DEEPSEEK_API_KEY` 缺失 → 交互式提示输入并写入 `$DSH_HOME/.env`，无需手动准备。
+
+克隆仓库后，在项目根目录执行：
+
+```bash
+git clone https://github.com/JHf0912/dsh-qqbot-bridge.git
+cd dsh-qqbot-bridge
+chmod +x scripts/dev-start.sh
+./scripts/dev-start.sh
+```
+
+脚本完成的工作与 Windows 版一致：安装依赖并构建 TypeScript、创建或更新 `qqbot-safe-dev` profile、将 profile 链接到当前源码、启动前校验 QQ 凭据、最后一步才启动 DSH。常用参数：
+
+- `--profile 名称`：指定 profile 名（默认 `qqbot-safe-dev`）
+- `--skip-install`：跳过依赖安装
+- `--build-only`：只安装并构建，不启动
+- `--setup-only`：完成全部准备工作但不启动 DSH（适合先跑一遍确认环境，再手动启动）
+
+启动前脚本会调用腾讯接口预校验 `QQBOT_APPID`/`QQBOT_SECRET`，凭据无效（如 `invalid appid or secret`）时会直接报错并给出平台核对指引，而不是等 DSH 启动后才失败。
+
+首次启动同样需要扫码绑定。看到 `Bot ready` 后重启一次（首次扫码写入的 `QQBOT_C2C_ALLOW` 不会注入本次进程，不重启白名单为空）。以后启动可直接执行：
+
+```bash
+node "$DSH_HOME/profiles/node_modules/@deepseek-ai/dsh/lib/bin.js" --profile qqbot-safe-dev
+```
+
+### WSL 注意事项
+
+- **必须安装 Linux 版 Node ≥ 22**（如 `nvm install 22`）。WSL 的互操作会把 Windows 版 `node.exe` 暴露进 PATH，脚本检测到 `/mnt/...` 路径会直接拒绝并给出安装指引——否则会出现「终端无输出、Windows 桌面弹报错框」的静默崩溃。
+- 其余流程与 Linux/macOS 完全一致（自动装 pnpm/DSH、提示输入 API Key、启动前校验 QQ 凭据）。
+
 ### npm 发布后安装
 
 ```bash
